@@ -259,7 +259,7 @@ export function App(): React.JSX.Element {
     sessionCheckRef.current = setInterval(async () => {
       const idle = Date.now() - lastActivityRef.current;
       if (idle >= INACTIVITY_TIMEOUT_MS) {
-        handleLogout();
+        void handleLogout();
         return;
       }
       if (idle >= INACTIVITY_TIMEOUT_MS - SESSION_WARN_MS) {
@@ -268,7 +268,7 @@ export function App(): React.JSX.Element {
       // Also validate with server
       const res = await window.sccfs.auth.validateSession(sessionId);
       if (!res.ok || !res.data?.valid) {
-        handleLogout();
+        void handleLogout();
       }
     }, 30_000);
     return () => {

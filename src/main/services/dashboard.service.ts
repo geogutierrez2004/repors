@@ -274,7 +274,10 @@ export class DashboardService {
       const stat = fs.statSync(filePath);
 
       if (stat.size > STORAGE_CONSTANTS.MAX_FILE_SIZE) {
-        throw new AuthError('FILE_TOO_LARGE', `File exceeds 2 GB limit: ${path.basename(filePath)}`);
+        throw new AuthError(
+          'FILE_TOO_LARGE',
+          `File exceeds ${STORAGE_CONSTANTS.MAX_FILE_SIZE / (1024 ** 3)} GB limit: ${path.basename(filePath)}`,
+        );
       }
 
       if (usedRow.total + stat.size > quota) {
@@ -313,6 +316,8 @@ export class DashboardService {
       usedRow.total += stat.size;
     }
 
+    // Returns the last uploaded file record; callers refresh their own file list
+    // to see all newly uploaded files when multiple files were selected.
     return lastUploaded;
   }
 
@@ -629,9 +634,21 @@ export class DashboardService {
     const currentPath = getDatabasePath();
     if (!currentPath) throw new AuthError('INTERNAL_ERROR', 'Cannot determine database path');
 
-    // Close, overwrite, reopen
+    // Create a safety backup before overwriting in case restore fails
+    const safetyBackup = currentPath + '.pre-restore.bak';
     this.db.close();
-    fs.copyFileSync(backupPath, currentPath);
+    fs.copyFileSync(currentPath, safetyBackup);
+
+    try {
+      fs.copyFileSync(backupPath, currentPath);
+    } catch (copyErr) {
+      // Restore from safety backup on failure
+      fs.copyFileSync(safetyBackup, currentPath);
+      throw new AuthError('RESTORE_FAILED', 'Failed to overwrite database during restore');
+    } finally {
+      // Always try to clean up the safety backup
+      fs.unlink(safetyBackup, () => null);
+    }
 
     const newDb = new BetterSqlite3(currentPath);
     newDb.pragma('journal_mode = WAL');

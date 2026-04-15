@@ -14,7 +14,9 @@ import type { AddToast } from '../App';
 import { cardStyle, btnStyle } from '../App';
 
 // Permission matrix mirrored from src/main/services/rbac.service.ts.
-// Keep in sync if ROLE_PERMISSIONS changes.
+// These values are intentionally duplicated here so the renderer can render
+// the matrix without an IPC round-trip.  If ROLE_PERMISSIONS in rbac.service.ts
+// changes, this list must be updated to stay in sync.
 const ALL_PERMISSIONS = [
   'change_own_password',
   'user_create', 'user_list', 'user_update', 'user_delete',
