@@ -64,6 +64,84 @@ export interface Session {
   lastActivity: number;
 }
 
+/** Safe session info exposed to renderer (no sensitive internals). */
+export interface SessionInfo {
+  sessionId: string;
+  userId: string;
+  username: string;
+  role: string;
+  createdAt: number;
+  lastActivity: number;
+}
+
+/** File record exposed to renderer. */
+export interface FileRecord {
+  id: string;
+  original_name: string;
+  stored_name: string;
+  mime_type: string | null;
+  size_bytes: number;
+  sha256: string;
+  shelf_id: string;
+  shelf_name: string;
+  uploaded_by: string;
+  uploader_name: string;
+  is_encrypted: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Shelf record with aggregate counts. */
+export interface ShelfRecord {
+  id: string;
+  name: string;
+  is_system: boolean;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+  file_count: number;
+  total_size_bytes: number;
+}
+
+/** Activity log entry. */
+export interface ActivityRecord {
+  id: string;
+  user_id: string | null;
+  username: string | null;
+  action: string;
+  detail: string | null;
+  created_at: string;
+}
+
+/** Storage statistics. */
+export interface StorageStats {
+  used_bytes: number;
+  quota_bytes: number;
+  file_count: number;
+  by_shelf: Array<{ shelf_id: string; shelf_name: string; size_bytes: number; file_count: number }>;
+  trend: Array<{ date: string; cumulative_bytes: number }>;
+}
+
+/** Dashboard overview aggregates. */
+export interface DashboardStats {
+  active_sessions: number;
+  total_files: number;
+  total_size_bytes: number;
+  pending_uploads: number;
+  failed_uploads_24h: number;
+  locked_accounts: number;
+  recent_activity: ActivityRecord[];
+  file_ops_7d: Array<{ date: string; uploads: number; downloads: number; failures: number }>;
+}
+
+/** Generic paginated result wrapper. */
+export interface PaginatedResult<T> {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
 // ────────────────────────────────────────
 // Auth payloads
 // ────────────────────────────────────────
@@ -107,3 +185,4 @@ export interface ResetPasswordRequest {
   userId: string;
   newPassword: string;
 }
+
