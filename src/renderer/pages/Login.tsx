@@ -4,21 +4,13 @@
  * The renderer is UX-only; real validation happens in the main process (spec §4.1).
  */
 import React, { useState } from 'react';
+import type { SafeUser } from '../../shared/types';
 
-declare global {
-  interface Window {
-    sccfs: {
-      auth: {
-        login: (
-          username: string,
-          password: string,
-        ) => Promise<{ ok: boolean; data?: unknown; error?: { message: string } }>;
-      };
-    };
-  }
+interface LoginProps {
+  onLogin: (sessionId: string, user: SafeUser) => void;
 }
 
-export function Login(): React.JSX.Element {
+export function Login({ onLogin }: LoginProps): React.JSX.Element {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -33,8 +25,9 @@ export function Login(): React.JSX.Element {
       const result = await window.sccfs.auth.login(username, password);
       if (!result.ok) {
         setError(result.error?.message ?? 'Login failed');
+      } else {
+        onLogin(result.data.sessionId, result.data.user);
       }
-      // On success, session handling would redirect to the main app view
     } catch {
       setError('An unexpected error occurred');
     } finally {
@@ -42,39 +35,108 @@ export function Login(): React.JSX.Element {
     }
   };
 
-  return React.createElement(
-    'div',
-    { style: { display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', background: '#f0f2f5' } },
-    React.createElement(
-      'form',
-      { onSubmit: handleSubmit, style: { background: '#fff', padding: 32, borderRadius: 8, boxShadow: '0 2px 8px rgba(0,0,0,0.1)', width: 360 } },
-      React.createElement('h1', { style: { fontSize: 20, marginBottom: 24, textAlign: 'center' as const } }, 'SCCFS Login'),
-      error && React.createElement('div', { style: { color: '#d32f2f', marginBottom: 16, fontSize: 14 } }, error),
-      React.createElement('input', {
-        type: 'text',
-        placeholder: 'Username',
-        value: username,
-        onChange: (e: React.ChangeEvent<HTMLInputElement>) => setUsername(e.target.value),
-        style: { width: '100%', padding: 10, marginBottom: 12, border: '1px solid #ccc', borderRadius: 4, fontSize: 14 },
-        disabled: loading,
-      }),
-      React.createElement('input', {
-        type: 'password',
-        placeholder: 'Password',
-        value: password,
-        onChange: (e: React.ChangeEvent<HTMLInputElement>) => setPassword(e.target.value),
-        style: { width: '100%', padding: 10, marginBottom: 16, border: '1px solid #ccc', borderRadius: 4, fontSize: 14 },
-        disabled: loading,
-      }),
-      React.createElement(
-        'button',
-        {
-          type: 'submit',
-          disabled: loading || !username || !password,
-          style: { width: '100%', padding: 10, background: '#1976d2', color: '#fff', border: 'none', borderRadius: 4, fontSize: 14, cursor: 'pointer' },
-        },
-        loading ? 'Signing in…' : 'Sign In',
-      ),
-    ),
+  return (
+    <div
+      style={{
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        height: '100vh',
+        background: 'var(--bg-base)',
+      }}
+    >
+      <form
+        onSubmit={handleSubmit}
+        style={{
+          background: 'var(--bg-surface)',
+          padding: 32,
+          borderRadius: 12,
+          boxShadow: 'var(--shadow-md)',
+          width: 360,
+          border: '1px solid var(--border)',
+        }}
+      >
+        <div style={{ textAlign: 'center', marginBottom: 28 }}>
+          <div style={{ fontSize: 32, marginBottom: 8 }}>🎓</div>
+          <h1 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }}>SCCFS</h1>
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+            St. Clare College Filing System
+          </p>
+        </div>
+
+        {error && (
+          <div
+            style={{
+              color: '#dc2626',
+              background: '#fef2f2',
+              border: '1px solid #fecaca',
+              borderRadius: 6,
+              padding: '8px 12px',
+              marginBottom: 16,
+              fontSize: 13,
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        <input
+          type="text"
+          placeholder="Username"
+          value={username}
+          autoComplete="username"
+          onChange={(e) => setUsername(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '10px 12px',
+            marginBottom: 12,
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            fontSize: 14,
+            background: 'var(--bg-surface)',
+            color: 'var(--text-primary)',
+            outline: 'none',
+          }}
+          disabled={loading}
+        />
+        <input
+          type="password"
+          placeholder="Password"
+          value={password}
+          autoComplete="current-password"
+          onChange={(e) => setPassword(e.target.value)}
+          style={{
+            width: '100%',
+            padding: '10px 12px',
+            marginBottom: 20,
+            border: '1px solid var(--border)',
+            borderRadius: 6,
+            fontSize: 14,
+            background: 'var(--bg-surface)',
+            color: 'var(--text-primary)',
+            outline: 'none',
+          }}
+          disabled={loading}
+        />
+        <button
+          type="submit"
+          disabled={loading || !username || !password}
+          style={{
+            width: '100%',
+            padding: '10px',
+            background: loading || !username || !password ? '#a5b4fc' : 'var(--accent)',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 6,
+            fontSize: 14,
+            fontWeight: 600,
+            cursor: loading || !username || !password ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {loading ? 'Signing in…' : 'Sign In'}
+        </button>
+      </form>
+    </div>
   );
 }
+

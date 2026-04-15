@@ -62,3 +62,78 @@ export const UnlockUserSchema = z.object({
 export const ListUsersSchema = z.object({
   sessionId: z.string().uuid('Invalid session ID'),
 });
+
+// ────────────────────────────────────────
+// Dashboard / file / shelf / storage validators
+// ────────────────────────────────────────
+
+export const SessionIdOnlySchema = z.object({
+  sessionId: z.string().uuid('Invalid session ID'),
+});
+
+export const FileListSchema = z.object({
+  sessionId: z.string().uuid(),
+  shelfId: z.string().uuid().optional(),
+  search: z.string().max(255).optional(),
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(100).default(25),
+});
+
+export const FileUploadSchema = z.object({
+  sessionId: z.string().uuid(),
+  shelfId: z.string().uuid(),
+  encrypt: z.boolean().default(false),
+});
+
+export const FileDownloadSchema = z.object({
+  sessionId: z.string().uuid(),
+  fileId: z.string().uuid(),
+});
+
+export const FileDeleteSchema = z.object({
+  sessionId: z.string().uuid(),
+  fileId: z.string().uuid(),
+});
+
+export const FileMoveSchema = z.object({
+  sessionId: z.string().uuid(),
+  fileId: z.string().uuid(),
+  shelfId: z.string().uuid(),
+});
+
+export const ShelfCreateSchema = z.object({
+  sessionId: z.string().uuid(),
+  name: z.string().min(1).max(100),
+});
+
+export const ShelfDeleteSchema = z.object({
+  sessionId: z.string().uuid(),
+  shelfId: z.string().uuid(),
+});
+
+export const ShelfRenameSchema = z.object({
+  sessionId: z.string().uuid(),
+  shelfId: z.string().uuid(),
+  name: z.string().min(1).max(100),
+});
+
+export const ActivityListSchema = z.object({
+  sessionId: z.string().uuid(),
+  userId: z.string().uuid().optional(),
+  action: z.string().optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+  page: z.number().int().min(1).default(1),
+  pageSize: z.number().int().min(1).max(100).default(50),
+});
+
+export const StorageSetQuotaSchema = z.object({
+  sessionId: z.string().uuid(),
+  quotaBytes: z.number().int().positive(),
+});
+
+export const SessionTerminateSchema = z.object({
+  sessionId: z.string().uuid(),
+  targetSessionId: z.string().uuid(),
+});
+
