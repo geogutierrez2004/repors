@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import { app } from 'electron';
 
 let db: Database.Database | null = null;
+let currentDbPath: string | null = null;
 
 function getDefaultDbPath(): string {
   const appData =
@@ -27,10 +28,16 @@ function getDefaultDbPath(): string {
 export function getDatabase(dbPath?: string): Database.Database {
   if (db) return db;
   const resolvedPath = dbPath ?? getDefaultDbPath();
+  currentDbPath = resolvedPath;
   db = new Database(resolvedPath);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   return db;
+}
+
+/** Return the filesystem path of the current database file. */
+export function getDatabasePath(): string | null {
+  return currentDbPath;
 }
 
 /** Close the current database connection. */
@@ -38,6 +45,7 @@ export function closeDatabase(): void {
   if (db) {
     db.close();
     db = null;
+    currentDbPath = null;
   }
 }
 
@@ -51,3 +59,4 @@ export function setDatabase(newDb: Database.Database): void {
   }
   db = newDb;
 }
+

@@ -68,6 +68,21 @@ export function destroyUserSessions(userId: string): number {
   return count;
 }
 
+/** List all currently active (non-expired) sessions with their user IDs. */
+export function listSessions(): Session[] {
+  const now = Date.now();
+  const active: Session[] = [];
+  for (const [, session] of sessions) {
+    if (
+      now - session.createdAt <= AUTH_CONSTANTS.SESSION_ABSOLUTE_EXPIRY_MS &&
+      now - session.lastActivity <= AUTH_CONSTANTS.SESSION_INACTIVITY_TIMEOUT_MS
+    ) {
+      active.push({ ...session });
+    }
+  }
+  return active;
+}
+
 /** Get session count (useful for testing). */
 export function getSessionCount(): number {
   return sessions.size;

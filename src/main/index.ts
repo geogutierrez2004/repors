@@ -10,6 +10,7 @@ import { app, BrowserWindow } from 'electron';
 import { getDatabase } from './database/connection';
 import { runMigrations } from './database';
 import { AuthService } from './services/auth.service';
+import { DashboardService } from './services/dashboard.service';
 import { registerAllHandlers } from './ipc/registry';
 import { createMainWindow } from './window';
 
@@ -22,12 +23,16 @@ async function bootstrap(): Promise<void> {
 
   // Initialize services
   const authService = new AuthService(db);
+  const dashboardService = new DashboardService(db);
 
   // Seed default admin if no users exist
   await authService.seedDefaultAdmin('admin', 'Admin@1234');
 
+  // Seed system shelves and default storage quota
+  dashboardService.seedSystemShelves();
+
   // Register all IPC handlers
-  registerAllHandlers({ authService });
+  registerAllHandlers({ authService, dashboardService });
 
   // Create main window
   mainWindow = createMainWindow();
@@ -59,3 +64,4 @@ if (!gotTheLock) {
 app.on('window-all-closed', () => {
   app.quit();
 });
+
