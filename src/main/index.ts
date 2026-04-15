@@ -37,6 +37,10 @@ async function bootstrap(): Promise<void> {
   });
 }
 
+function handleStartupError(error: unknown): void {
+  console.error('SCCFS startup failed:', error);
+}
+
 // Single instance lock
 const gotTheLock = app.requestSingleInstanceLock();
 if (!gotTheLock) {
@@ -49,7 +53,7 @@ if (!gotTheLock) {
     }
   });
 
-  app.whenReady().then(bootstrap);
+  app.whenReady().then(bootstrap).catch(handleStartupError);
 }
 
 app.on('window-all-closed', () => {

@@ -15,7 +15,8 @@ export function createMainWindow(): BrowserWindow {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      // Keep sandbox off for now so preload can load shared modules and expose window.sccfs.
+      sandbox: false,
       webSecurity: true,
       allowRunningInsecureContent: false,
     },
@@ -27,7 +28,7 @@ export function createMainWindow(): BrowserWindow {
     void win.loadURL('http://localhost:3000');
     win.webContents.openDevTools();
   } else {
-    void win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+    void win.loadFile(path.join(__dirname, '..', '..', 'renderer', 'renderer', 'index.html'));
   }
 
   return win;
