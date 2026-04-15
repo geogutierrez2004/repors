@@ -1,0 +1,38 @@
+{
+  "name": "sccfs",
+  "version": "3.0.0",
+  "description": "St. Clare College Filing System – local-first desktop filing application for registrar operations",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build:main": "tsc -p tsconfig.main.json",
+    "build:renderer": "tsc -p tsconfig.renderer.json",
+    "build": "npm run build:main && npm run build:renderer",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint src/ tests/ --ext .ts,.tsx",
+    "start": "electron dist/main/index.js"
+  },
+  "keywords": ["electron", "filing-system", "registrar", "sqlite"],
+  "license": "UNLICENSED",
+  "private": true,
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^20.17.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@types/uuid": "^10.0.0",
+    "electron": "^32.0.0",
+    "electron-builder": "^25.1.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0",
+    "eslint": "^9.0.0"
+  },
+  "dependencies": {
+    "argon2": "^0.41.0",
+    "better-sqlite3": "^11.6.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "uuid": "^10.0.0",
+    "zod": "^3.23.0"
+  }
+}
