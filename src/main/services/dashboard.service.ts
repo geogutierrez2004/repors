@@ -99,7 +99,7 @@ const PBKDF2_KEY_LEN = 32;
 const PBKDF2_DIGEST = 'sha512';
 const GCM_IV_BYTES = 12;
 const GCM_SALT_BYTES = 16;
-const TEMP_FILE_EXTENSION = '.part';
+const TEMP_PART_EXTENSION = '.part';
 
 function extractErrorCode(error: unknown): string {
   return typeof error === 'object' && error && 'code' in error
@@ -116,6 +116,10 @@ function countFilesRecursive(dirPath: string): number {
     else if (entry.isFile()) count += 1;
   }
   return count;
+}
+
+function makeTempPartPath(basePath: string): string {
+  return `${basePath}${TEMP_PART_EXTENSION}.${uuidv4()}`;
 }
 
 // ────────────────────────────────────────
@@ -355,6 +359,15 @@ export class DashboardService {
 
     for (const filePath of filePaths) {
       const sourceName = path.basename(filePath);
+      let rollbackContext:
+        | {
+            fileId: string;
+            payloadId: string;
+            storedName: string;
+            reusedPayload: boolean;
+            payloadWrittenToDisk: boolean;
+          }
+        | undefined;
       const item: FileUploadItemResult = {
         source_path: filePath,
         source_name: sourceName,
@@ -393,6 +406,7 @@ export class DashboardService {
             }
           | undefined;
         let reusedPayload = false;
+        let payloadWrittenToDisk = false;
 
         if (!encrypt) {
           const existingPayload = this.db
@@ -413,6 +427,7 @@ export class DashboardService {
             storedName = `${uuidv4()}${ext}`;
             payloadId = uuidv4();
             await copyStream(filePath, path.join(filesDir, storedName));
+            payloadWrittenToDisk = true;
           }
         } else {
           storedName = `${uuidv4()}${ext}`;
@@ -422,12 +437,23 @@ export class DashboardService {
           const iv = crypto.randomBytes(GCM_IV_BYTES);
           const key = this.deriveFileKey(salt, iterations);
           const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+          const finalPath = path.join(filesDir, storedName);
+          const tempPath = makeTempPartPath(finalPath);
 
-          await pipeline(
-            fs.createReadStream(filePath),
-            cipher,
-            fs.createWriteStream(path.join(filesDir, storedName)),
-          );
+          try {
+            await pipeline(
+              fs.createReadStream(filePath),
+              cipher,
+              fs.createWriteStream(tempPath),
+            );
+            await fs.promises.rename(tempPath, finalPath);
+            payloadWrittenToDisk = true;
+          } catch (e) {
+            if (fs.existsSync(tempPath)) {
+              fs.rmSync(tempPath, { force: true });
+            }
+            throw e;
+          }
 
           encryptionMeta = {
             salt: salt.toString('base64'),
@@ -488,6 +514,16 @@ export class DashboardService {
         });
         persistTransaction();
 
+        rollbackContext = {
+          fileId,
+          payloadId,
+          storedName,
+          reusedPayload,
+          payloadWrittenToDisk,
+        };
+
+        await this.assertStoredUploadIntegrity(fileId, path.join(filesDir, storedName), sha256, encrypt);
+
         if (mode === 'move_to_system') {
           item.removed_original = await this.removeOriginalFileSafely(filePath, confirmPermanentDelete);
         }
@@ -502,6 +538,13 @@ export class DashboardService {
         item.file = this.getFileRecord(fileId);
         usedRow.total += stat.size;
       } catch (e) {
+        if (e instanceof AuthError && e.code.startsWith('UPLOAD_INTEGRITY_') && rollbackContext) {
+          try {
+            this.rollbackUploadPersistence(rollbackContext);
+          } catch {
+            // best-effort rollback
+          }
+        }
         if (e instanceof AuthError) {
           item.error = { code: e.code, message: e.message };
         } else {
@@ -548,7 +591,7 @@ export class DashboardService {
         throw new AuthError('ENCRYPTION_METADATA_MISSING', 'Encryption metadata is missing for this file');
       }
 
-      const tempOutPath = `${filePath}.${uuidv4()}${TEMP_FILE_EXTENSION}`;
+      const tempOutPath = makeTempPartPath(filePath);
       try {
         const salt = Buffer.from(metadata.salt, 'base64');
         const iv = Buffer.from(metadata.iv, 'base64');
@@ -558,7 +601,7 @@ export class DashboardService {
         decipher.setAuthTag(authTag);
 
         await pipeline(fs.createReadStream(srcPath), decipher, fs.createWriteStream(tempOutPath));
-        fs.renameSync(tempOutPath, filePath);
+        await fs.promises.rename(tempOutPath, filePath);
       } catch (e) {
         if (fs.existsSync(tempOutPath)) {
           fs.rmSync(tempOutPath, { force: true });
@@ -1073,6 +1116,105 @@ export class DashboardService {
       PBKDF2_KEY_LEN,
       PBKDF2_DIGEST,
     );
+  }
+
+  private async assertStoredUploadIntegrity(
+    fileId: string,
+    storedPath: string,
+    expectedPlaintextSha256: string,
+    encrypted: boolean,
+  ): Promise<void> {
+    if (!fs.existsSync(storedPath)) {
+      throw new AuthError('UPLOAD_INTEGRITY_MISSING_PAYLOAD', 'Stored payload was not found after upload');
+    }
+
+    if (encrypted) {
+      await this.assertEncryptedPayloadIntegrity(fileId, storedPath, expectedPlaintextSha256);
+      return;
+    }
+    await this.assertPlainPayloadIntegrity(storedPath, expectedPlaintextSha256);
+  }
+
+  private async assertPlainPayloadIntegrity(storedPath: string, expectedPlaintextSha256: string): Promise<void> {
+    const storedSha256 = await computeSha256Stream(storedPath);
+    if (storedSha256 !== expectedPlaintextSha256) {
+      throw new AuthError('UPLOAD_INTEGRITY_HASH_MISMATCH', 'Plain upload integrity verification failed');
+    }
+  }
+
+  private async assertEncryptedPayloadIntegrity(
+    fileId: string,
+    storedPath: string,
+    expectedPlaintextSha256: string,
+  ): Promise<void> {
+    const metadata = this.db
+      .prepare('SELECT salt, iv, auth_tag, iterations FROM encryption_keys WHERE file_id = ?')
+      .get(fileId) as
+      | { salt: string; iv: string; auth_tag: string; iterations: number }
+      | undefined;
+
+    if (!metadata || !metadata.salt || !metadata.iv || !metadata.auth_tag || !metadata.iterations) {
+      throw new AuthError('UPLOAD_INTEGRITY_MISSING_METADATA', 'Encryption metadata is missing for uploaded file');
+    }
+
+    const hash = crypto.createHash('sha256');
+    try {
+      const salt = Buffer.from(metadata.salt, 'base64');
+      const iv = Buffer.from(metadata.iv, 'base64');
+      const authTag = Buffer.from(metadata.auth_tag, 'base64');
+      const key = this.deriveFileKey(salt, metadata.iterations);
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAuthTag(authTag);
+
+      await pipeline(fs.createReadStream(storedPath), decipher, hash);
+    } catch (e) {
+      const errorCode = extractErrorCode(e);
+      if (errorCode === 'ERR_OSSL_EVP_BAD_DECRYPT') {
+        throw new AuthError('UPLOAD_INTEGRITY_AUTH_TAG', 'Encrypted file integrity check failed');
+      }
+      throw new AuthError('UPLOAD_INTEGRITY_DECRYPT', 'Encrypted file integrity verification failed');
+    }
+
+    const decryptedSha256 = hash.digest('hex');
+    if (decryptedSha256 !== expectedPlaintextSha256) {
+      throw new AuthError('UPLOAD_INTEGRITY_HASH_MISMATCH', 'Encrypted upload integrity verification failed');
+    }
+  }
+
+  private rollbackUploadPersistence(params: {
+    fileId: string;
+    payloadId: string;
+    storedName: string;
+    reusedPayload: boolean;
+    payloadWrittenToDisk: boolean;
+  }): void {
+    const payload = this.db
+      .prepare('SELECT id, ref_count FROM file_payloads WHERE id = ?')
+      .get(params.payloadId) as { id: string; ref_count: number } | undefined;
+
+    const rollbackTx = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM upload_history WHERE file_id = ?').run(params.fileId);
+      this.db.prepare('DELETE FROM encryption_keys WHERE file_id = ?').run(params.fileId);
+      this.db.prepare('DELETE FROM files WHERE id = ?').run(params.fileId);
+
+      if (payload?.id) {
+        if (!params.reusedPayload || payload.ref_count <= 1) {
+          this.db.prepare('DELETE FROM file_payloads WHERE id = ?').run(payload.id);
+        } else {
+          this.db
+            .prepare("UPDATE file_payloads SET ref_count = ref_count - 1, updated_at = datetime('now') WHERE id = ?")
+            .run(payload.id);
+        }
+      }
+    });
+    rollbackTx();
+
+    if (params.payloadWrittenToDisk) {
+      const storedPath = path.join(getFilesDir(), params.storedName);
+      if (fs.existsSync(storedPath)) {
+        fs.rmSync(storedPath, { force: true });
+      }
+    }
   }
 
   private async removeOriginalFileSafely(filePath: string, confirmPermanentDelete: boolean): Promise<boolean> {

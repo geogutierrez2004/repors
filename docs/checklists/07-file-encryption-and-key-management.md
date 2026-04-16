@@ -10,3 +10,6 @@
 - [x] Encrypted download fails safely when encryption metadata is missing
 - [x] Streaming encrypt/decrypt is used for large files
 - [x] SHA-256 stored in `files.sha256` is the plaintext checksum (pre-encryption)
+- [x] Encrypted upload writes ciphertext directly to system storage (no plaintext staging in system files directory)
+- [x] Upload integrity is verified before move-to-system source removal
+- [x] Source handling modes supported: `keep_original`, `move_to_system`, `ask_each_time`

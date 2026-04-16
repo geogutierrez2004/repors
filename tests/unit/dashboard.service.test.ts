@@ -32,6 +32,8 @@ vi.mock('electron', () => ({
 }));
 
 describe('DashboardService file extension handling', () => {
+  const ENCRYPTED_TEST_REPEAT_COUNT = 128;
+
   let db: Database.Database;
   let auth: AuthService;
   let dashboard: DashboardService;
@@ -211,6 +213,38 @@ describe('DashboardService file extension handling', () => {
     expect(fs.readFileSync(downloadPath)).toEqual(originalBytes);
   });
 
+  it('encrypted upload stores ciphertext only in system storage', async () => {
+    const uploadPath = path.join(dataDir, 'ciphertext-check.txt');
+    const plaintext = Buffer.from('TOP-SECRET-DATA::'.repeat(ENCRYPTED_TEST_REPEAT_COUNT), 'utf-8');
+    fs.writeFileSync(uploadPath, plaintext);
+    showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: [uploadPath] });
+
+    const uploadRes = await dashboard.uploadFile(
+      sessionId,
+      shelfId,
+      true,
+      'keep_original',
+      false,
+      {} as BrowserWindow,
+    );
+
+    const file = uploadRes.files[0]?.file;
+    expect(uploadRes.files[0]?.success).toBe(true);
+    expect(file).toBeTruthy();
+    const keyRow = db
+      .prepare('SELECT salt, iv, auth_tag, iterations FROM encryption_keys WHERE file_id = ?')
+      .get(file!.id) as { salt: string; iv: string; auth_tag: string; iterations: number } | undefined;
+    expect(keyRow).toBeTruthy();
+    expect(keyRow?.iterations).toBeGreaterThanOrEqual(600_000);
+
+    const storedPath = path.join(dataDir, 'files', file!.stored_name);
+    const storedBytes = fs.readFileSync(storedPath);
+    expect(storedBytes.equals(plaintext)).toBe(false);
+    const storedSha = crypto.createHash('sha256').update(storedBytes).digest('hex');
+    const plainSha = crypto.createHash('sha256').update(plaintext).digest('hex');
+    expect(storedSha).not.toBe(plainSha);
+  });
+
   it('tampered encrypted file fails auth-tag validation and leaves no plaintext output', async () => {
     const uploadPath = path.join(dataDir, 'tamper.bin');
     fs.writeFileSync(uploadPath, crypto.randomBytes(1024));
@@ -266,5 +300,78 @@ describe('DashboardService file extension handling', () => {
       code: 'ENCRYPTION_METADATA_MISSING',
     });
     expect(fs.existsSync(downloadPath)).toBe(false);
+  });
+
+  it('unencrypted upload and download flow remains unchanged', async () => {
+    const uploadPath = path.join(dataDir, 'plain-flow.txt');
+    const originalText = 'plain file content';
+    fs.writeFileSync(uploadPath, originalText, 'utf-8');
+    showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: [uploadPath] });
+
+    const uploadRes = await dashboard.uploadFile(
+      sessionId,
+      shelfId,
+      false,
+      'keep_original',
+      false,
+      {} as BrowserWindow,
+    );
+    const file = uploadRes.files[0]?.file;
+    expect(uploadRes.files[0]?.success).toBe(true);
+    const fileRow = db.prepare('SELECT is_encrypted FROM files WHERE id = ?').get(file?.id) as { is_encrypted: number };
+    expect(fileRow.is_encrypted).toBe(0);
+
+    const keyRow = db.prepare('SELECT file_id FROM encryption_keys WHERE file_id = ?').get(file?.id);
+    expect(keyRow).toBeUndefined();
+
+    const downloadPath = path.join(dataDir, 'plain-flow-out.txt');
+    showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: downloadPath });
+    await dashboard.downloadFile(sessionId, file!.id, {} as BrowserWindow);
+
+    expect(fs.readFileSync(downloadPath, 'utf-8')).toBe(originalText);
+  });
+
+  it('move_to_system removes source only after full upload success', async () => {
+    const uploadPath = path.join(dataDir, 'move-success.txt');
+    fs.writeFileSync(uploadPath, 'move me', 'utf-8');
+    showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: [uploadPath] });
+    trashItemMock.mockImplementation(async (targetPath: string) => {
+      fs.rmSync(targetPath, { force: true });
+    });
+
+    const uploadRes = await dashboard.uploadFile(
+      sessionId,
+      shelfId,
+      true,
+      'move_to_system',
+      false,
+      {} as BrowserWindow,
+    );
+
+    expect(uploadRes.files[0]?.success).toBe(true);
+    expect(uploadRes.files[0]?.removed_original).toBe(true);
+    expect(trashItemMock).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(uploadPath)).toBe(false);
+  });
+
+  it('move_to_system does not remove original when upload fails', async () => {
+    const uploadPath = path.join(dataDir, 'move-fail.txt');
+    fs.writeFileSync(uploadPath, 'do not remove', 'utf-8');
+    showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: [uploadPath] });
+    db.prepare("INSERT OR REPLACE INTO storage_config (key, value) VALUES ('quota_bytes', '1')").run();
+
+    const uploadRes = await dashboard.uploadFile(
+      sessionId,
+      shelfId,
+      true,
+      'move_to_system',
+      false,
+      {} as BrowserWindow,
+    );
+
+    expect(uploadRes.files[0]?.success).toBe(false);
+    expect(uploadRes.files[0]?.removed_original).toBe(false);
+    expect(trashItemMock).not.toHaveBeenCalled();
+    expect(fs.existsSync(uploadPath)).toBe(true);
   });
 });
