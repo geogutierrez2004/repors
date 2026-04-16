@@ -31,6 +31,7 @@ import type {
 } from '../../shared/types';
 import { getDatabasePath, setDatabase, getDatabase } from '../database/connection';
 import { runMigrations } from '../database';
+import { normalizeExtension, guessExtensionFromMime } from '../utils/file-extension';
 
 // ────────────────────────────────────────
 // Helpers
@@ -268,6 +269,7 @@ export class DashboardService {
     const items = this.db
       .prepare(
         `SELECT f.id, f.original_name, f.stored_name, f.mime_type, f.size_bytes, f.sha256,
+                f.original_extension,
                 f.shelf_id, s.name as shelf_name,
                 f.uploaded_by, COALESCE(u.username, '') as uploader_name,
                 f.is_encrypted, f.created_at, f.updated_at
@@ -333,7 +335,9 @@ export class DashboardService {
       }
 
       const sha256 = computeSha256(filePath);
-      const ext = path.extname(filePath);
+      const originalName = path.basename(filePath);
+      const ext = path.extname(originalName);
+      const originalExtension = normalizeExtension(ext);
       const storedName = `${uuidv4()}${ext}`;
       const destPath = path.join(filesDir, storedName);
 
@@ -344,10 +348,20 @@ export class DashboardService {
 
       this.db
         .prepare(
-          `INSERT INTO files (id, original_name, stored_name, mime_type, size_bytes, sha256, shelf_id, uploaded_by, is_encrypted)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+          `INSERT INTO files (id, original_name, original_extension, stored_name, mime_type, size_bytes, sha256, shelf_id, uploaded_by, is_encrypted)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
         )
-        .run(fileId, path.basename(filePath), storedName, mime, stat.size, sha256, shelfId, session.userId);
+        .run(
+          fileId,
+          originalName,
+          originalExtension,
+          storedName,
+          mime,
+          stat.size,
+          sha256,
+          shelfId,
+          session.userId,
+        );
 
       const uploadHistoryId = uuidv4();
       this.db
@@ -380,7 +394,7 @@ export class DashboardService {
 
     const { filePath, canceled } = await dialog.showSaveDialog(win, {
       title: 'Save File',
-      defaultPath: fileRow.original_name,
+      defaultPath: this.resolveDownloadFileName(fileRow),
     });
 
     if (canceled || !filePath) throw new AuthError('CANCELLED', 'Download cancelled');
@@ -831,7 +845,7 @@ export class DashboardService {
   private getFileRecord(fileId: string): FileRecord {
     return this.db
       .prepare(
-        `SELECT f.id, f.original_name, f.stored_name, f.mime_type, f.size_bytes, f.sha256,
+        `SELECT f.id, f.original_name, f.original_extension, f.stored_name, f.mime_type, f.size_bytes, f.sha256,
                 f.shelf_id, s.name as shelf_name,
                 f.uploaded_by, COALESCE(u.username, '') as uploader_name,
                 f.is_encrypted, f.created_at, f.updated_at
@@ -878,5 +892,24 @@ export class DashboardService {
       '.zip': 'application/zip',
     };
     return map[ext.toLowerCase()] ?? 'application/octet-stream';
+  }
+
+  private resolveDownloadFileName(file: {
+    original_name: string;
+    original_extension?: string | null;
+    stored_name: string;
+    mime_type: string | null;
+  }): string {
+    const originalNameExtension = normalizeExtension(path.extname(file.original_name));
+    if (originalNameExtension) {
+      return file.original_name;
+    }
+
+    const extension =
+      normalizeExtension(file.original_extension) ??
+      normalizeExtension(path.extname(file.stored_name)) ??
+      guessExtensionFromMime(file.mime_type);
+
+    return extension ? `${file.original_name}${extension}` : file.original_name;
   }
 }
