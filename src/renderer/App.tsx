@@ -310,7 +310,7 @@ export function App(): React.JSX.Element {
         setPage('dashboard');
         setShowSessionWarning(false);
         if (sessionCheckRef.current) clearInterval(sessionCheckRef.current);
-        addToast('info', 'Backup restored. Please sign in again.');
+        addToast('info', 'Backup restored. Please log in again.');
         return;
       }
 

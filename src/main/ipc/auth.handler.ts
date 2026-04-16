@@ -49,6 +49,19 @@ type InvokeGuard = <T>(invoke: () => Promise<IpcResponse<T>>) => Promise<IpcResp
 
 const passthroughGuard: InvokeGuard = async <T>(invoke: () => Promise<IpcResponse<T>>) => invoke();
 
+const AUTH_CHANNELS = [
+  IPC_CHANNELS.AUTH_LOGIN,
+  IPC_CHANNELS.AUTH_LOGOUT,
+  IPC_CHANNELS.AUTH_VALIDATE_SESSION,
+  IPC_CHANNELS.AUTH_GET_CURRENT_USER,
+  IPC_CHANNELS.AUTH_CHANGE_PASSWORD,
+  IPC_CHANNELS.USERS_LIST,
+  IPC_CHANNELS.USERS_UPDATE,
+  IPC_CHANNELS.USERS_DELETE,
+  IPC_CHANNELS.USERS_RESET_PASSWORD,
+  IPC_CHANNELS.USERS_UNLOCK,
+] as const;
+
 export function registerAuthHandlers(authService: AuthService, guard: InvokeGuard = passthroughGuard): () => void {
   // ── Login ────────────────────────────
   ipcMain.handle(IPC_CHANNELS.AUTH_LOGIN, (_event, payload: unknown) =>
@@ -169,15 +182,8 @@ export function registerAuthHandlers(authService: AuthService, guard: InvokeGuar
     }));
 
   return () => {
-    ipcMain.removeHandler(IPC_CHANNELS.AUTH_LOGIN);
-    ipcMain.removeHandler(IPC_CHANNELS.AUTH_LOGOUT);
-    ipcMain.removeHandler(IPC_CHANNELS.AUTH_VALIDATE_SESSION);
-    ipcMain.removeHandler(IPC_CHANNELS.AUTH_GET_CURRENT_USER);
-    ipcMain.removeHandler(IPC_CHANNELS.AUTH_CHANGE_PASSWORD);
-    ipcMain.removeHandler(IPC_CHANNELS.USERS_LIST);
-    ipcMain.removeHandler(IPC_CHANNELS.USERS_UPDATE);
-    ipcMain.removeHandler(IPC_CHANNELS.USERS_DELETE);
-    ipcMain.removeHandler(IPC_CHANNELS.USERS_RESET_PASSWORD);
-    ipcMain.removeHandler(IPC_CHANNELS.USERS_UNLOCK);
+    for (const channel of AUTH_CHANNELS) {
+      ipcMain.removeHandler(channel);
+    }
   };
 }

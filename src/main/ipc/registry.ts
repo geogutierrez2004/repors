@@ -12,6 +12,7 @@ import type { DashboardService } from '../services/dashboard.service';
 import { registerAuthHandlers } from './auth.handler';
 import { registerDashboardHandlers } from './dashboard.handler';
 
+/** Wrapper for IPC invocations (e.g., lock/guard behavior during restore). */
 export type IpcInvokeGuard = <T>(invoke: () => Promise<IpcResponse<T>>) => Promise<IpcResponse<T>>;
 
 const HANDLER_CHANNELS: readonly string[] = [
@@ -21,7 +22,6 @@ const HANDLER_CHANNELS: readonly string[] = [
   IPC_CHANNELS.AUTH_CHANGE_PASSWORD,
   IPC_CHANNELS.AUTH_GET_CURRENT_USER,
   IPC_CHANNELS.USERS_LIST,
-  IPC_CHANNELS.USERS_CREATE,
   IPC_CHANNELS.USERS_UPDATE,
   IPC_CHANNELS.USERS_DELETE,
   IPC_CHANNELS.USERS_RESET_PASSWORD,

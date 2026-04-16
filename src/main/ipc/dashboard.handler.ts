@@ -58,6 +58,26 @@ type InvokeGuard = <T>(invoke: () => Promise<IpcResponse<T>>) => Promise<IpcResp
 
 const passthroughGuard: InvokeGuard = async <T>(invoke: () => Promise<IpcResponse<T>>) => invoke();
 
+const DASHBOARD_CHANNELS = [
+  IPC_CHANNELS.DASHBOARD_STATS,
+  IPC_CHANNELS.FILES_LIST,
+  IPC_CHANNELS.FILES_UPLOAD,
+  IPC_CHANNELS.FILES_DOWNLOAD,
+  IPC_CHANNELS.FILES_DELETE,
+  IPC_CHANNELS.FILES_MOVE,
+  IPC_CHANNELS.SHELVES_LIST,
+  IPC_CHANNELS.SHELVES_CREATE,
+  IPC_CHANNELS.SHELVES_DELETE,
+  IPC_CHANNELS.SHELVES_RENAME,
+  IPC_CHANNELS.ACTIVITY_LIST,
+  IPC_CHANNELS.STORAGE_STATS,
+  IPC_CHANNELS.STORAGE_SET_QUOTA,
+  IPC_CHANNELS.STORAGE_BACKUP,
+  IPC_CHANNELS.STORAGE_RESTORE,
+  IPC_CHANNELS.SESSIONS_LIST,
+  IPC_CHANNELS.SESSIONS_TERMINATE,
+] as const;
+
 export function registerDashboardHandlers(
   dashboardService: DashboardService,
   guard: InvokeGuard = passthroughGuard,
@@ -250,22 +270,8 @@ export function registerDashboardHandlers(
     }));
 
   return () => {
-    ipcMain.removeHandler(IPC_CHANNELS.DASHBOARD_STATS);
-    ipcMain.removeHandler(IPC_CHANNELS.FILES_LIST);
-    ipcMain.removeHandler(IPC_CHANNELS.FILES_UPLOAD);
-    ipcMain.removeHandler(IPC_CHANNELS.FILES_DOWNLOAD);
-    ipcMain.removeHandler(IPC_CHANNELS.FILES_DELETE);
-    ipcMain.removeHandler(IPC_CHANNELS.FILES_MOVE);
-    ipcMain.removeHandler(IPC_CHANNELS.SHELVES_LIST);
-    ipcMain.removeHandler(IPC_CHANNELS.SHELVES_CREATE);
-    ipcMain.removeHandler(IPC_CHANNELS.SHELVES_DELETE);
-    ipcMain.removeHandler(IPC_CHANNELS.SHELVES_RENAME);
-    ipcMain.removeHandler(IPC_CHANNELS.ACTIVITY_LIST);
-    ipcMain.removeHandler(IPC_CHANNELS.STORAGE_STATS);
-    ipcMain.removeHandler(IPC_CHANNELS.STORAGE_SET_QUOTA);
-    ipcMain.removeHandler(IPC_CHANNELS.STORAGE_BACKUP);
-    ipcMain.removeHandler(IPC_CHANNELS.STORAGE_RESTORE);
-    ipcMain.removeHandler(IPC_CHANNELS.SESSIONS_LIST);
-    ipcMain.removeHandler(IPC_CHANNELS.SESSIONS_TERMINATE);
+    for (const channel of DASHBOARD_CHANNELS) {
+      ipcMain.removeHandler(channel);
+    }
   };
 }

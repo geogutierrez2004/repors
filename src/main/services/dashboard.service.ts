@@ -9,6 +9,7 @@
  */
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
+import BetterSqlite3 from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
@@ -757,7 +758,8 @@ export class DashboardService {
     });
   }
 
-  recordStorageRestoreActivity(userId: string, backupDirName: string): void {
+  /** Log a successful restore operation in the activity log. */
+  logStorageRestoreActivity(userId: string, backupDirName: string): void {
     this.logActivity(userId, 'STORAGE_RESTORE', `Backup restored from ${backupDirName}`);
   }
 

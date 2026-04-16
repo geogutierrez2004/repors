@@ -163,7 +163,7 @@ const api = {
       };
       ipcRenderer.on(IPC_CHANNELS.APP_RESTORED, listener);
       return () => {
-        ipcRenderer.removeListener(IPC_CHANNELS.APP_RESTORED, listener);
+        ipcRenderer.off(IPC_CHANNELS.APP_RESTORED, listener);
       };
     },
   },

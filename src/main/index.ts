@@ -24,6 +24,17 @@ import type { IpcResponse } from '../shared/types';
 let mainWindow: BrowserWindow | null = null;
 let services: MainServices | null = null;
 let restoreInProgress = false;
+const DEFAULT_ADMIN_USERNAME = 'fs_adm1';
+const DEFAULT_ADMIN_PASSWORD = 'M0n$p33t101';
+
+function getFilesDir(): string {
+  const appData =
+    process.env['SCCFS_DATA_DIR'] ||
+    (typeof app !== 'undefined' ? app.getPath('userData') : path.join(process.cwd(), '.sccfs-data'));
+  const filesDir = path.join(appData, 'files');
+  fs.mkdirSync(filesDir, { recursive: true });
+  return filesDir;
+}
 
 function createRestoreGuard(): IpcInvokeGuard {
   return async <T>(invoke: () => Promise<IpcResponse<T>>) => {
@@ -66,26 +77,19 @@ async function bootstrap(): Promise<void> {
         },
         {
           getCurrentDbPath: () => getDatabasePath(),
-          getCurrentFilesDir: () => {
-            const appData =
-              process.env['SCCFS_DATA_DIR'] ||
-              (typeof app !== 'undefined' ? app.getPath('userData') : path.join(process.cwd(), '.sccfs-data'));
-            const filesDir = path.join(appData, 'files');
-            fs.mkdirSync(filesDir, { recursive: true });
-            return filesDir;
-          },
+          getCurrentFilesDir: () => getFilesDir(),
           closeDatabase: () => closeDatabase(),
           openDatabase: (dbPath: string) => getDatabase(dbPath),
           runMigrations: (nextDb) => runMigrations(nextDb),
           createServices: (nextDb) => createServices(nextDb, { restoreExecutor }),
           seedServices: async (nextServices) => {
-            await nextServices.authService.seedDefaultAdmin('fs_adm1', 'M0n$p33t101');
+            await nextServices.authService.seedDefaultAdmin(DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD);
             nextServices.dashboardService.seedSystemShelves();
           },
           logRestoreActivity: (nextServices) => {
-            nextServices.dashboardService.recordStorageRestoreActivity(
+            nextServices.dashboardService.logStorageRestoreActivity(
               request.actorUserId,
-              request.backupDir.split(/[\\/]/).pop() ?? request.backupDir,
+              path.basename(request.backupDir),
             );
           },
           activateServices: (nextServices) => {
@@ -106,7 +110,7 @@ async function bootstrap(): Promise<void> {
   services = createServices(db, { restoreExecutor });
 
   // Seed default admin if no users exist
-  await services.authService.seedDefaultAdmin('fs_adm1', 'M0n$p33t101');
+  await services.authService.seedDefaultAdmin(DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD);
 
   // Seed system shelves and default storage quota
   services.dashboardService.seedSystemShelves();

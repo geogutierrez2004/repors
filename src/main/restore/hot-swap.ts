@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { AuthError } from '../services/auth.service';
 import type { MainServices } from '../services/container';
@@ -25,7 +26,7 @@ export interface HotSwapRestoreDependencies {
 
 function replaceDirectory(targetDir: string, sourceDir: string): void {
   const parentDir = path.dirname(targetDir);
-  const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const nonce = `${Date.now()}-${randomUUID()}`;
   const stagingDir = path.join(parentDir, `.sccfs-stage-${nonce}`);
   const previousDir = path.join(parentDir, `.sccfs-prev-${nonce}`);
 
@@ -102,8 +103,9 @@ export async function performHotSwapRestore(
       const rollbackServices = deps.createServices(rollbackDb);
       await deps.seedServices(rollbackServices);
       deps.activateServices(rollbackServices);
-    } catch {
+    } catch (rollbackError) {
       // Best effort rollback; keep original restore error envelope.
+      console.error('Restore rollback failed:', rollbackError);
     }
 
     throw normalizeError(error);
