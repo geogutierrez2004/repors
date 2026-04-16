@@ -92,6 +92,11 @@ export const FileDownloadSchema = z.object({
   fileId: z.string().uuid(),
 });
 
+export const FileViewEncryptedSchema = z.object({
+  sessionId: z.string().uuid(),
+  fileId: z.string().uuid(),
+});
+
 export const FileDeleteSchema = z.object({
   sessionId: z.string().uuid(),
   fileId: z.string().uuid(),

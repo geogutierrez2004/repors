@@ -18,6 +18,11 @@ interface Props {
 }
 
 const PAGE_SIZE = 25;
+const ENCRYPT_BEFORE_UPLOAD_PROMPT = 'Encrypt this file before uploading?';
+
+export function requestUploadEncryptionDecision(confirmFn: (message: string) => boolean): boolean {
+  return confirmFn(ENCRYPT_BEFORE_UPLOAD_PROMPT);
+}
 
 function fmtBytes(b: number): string {
   if (b >= 1e9) return `${(b / 1e9).toFixed(2)} GB`;
@@ -114,7 +119,6 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
-  const [encryptUpload, setEncryptUpload] = useState(false);
   const [sourceHandlingMode, setSourceHandlingMode] = useState<SourceHandlingMode>('keep_original');
   const [moveModal, setMoveModal] = useState<string[] | null>(null);
   const [newShelfName, setNewShelfName] = useState('');
@@ -156,6 +160,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       addToast('warning', 'Select a shelf before uploading');
       return;
     }
+    const encrypt = requestUploadEncryptionDecision((message) => confirm(message));
     setUploadLoading(true);
     let effectiveMode = sourceHandlingMode;
     if (sourceHandlingMode === 'ask_each_time') {
@@ -163,7 +168,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       effectiveMode = shouldMove ? 'move_to_system' : 'keep_original';
     }
 
-    const res = await window.sccfs.files.upload(sessionId, selectedShelf, encryptUpload, effectiveMode, false);
+    const res = await window.sccfs.files.upload(sessionId, selectedShelf, encrypt, effectiveMode, false);
     setUploadLoading(false);
     if (res.ok) {
       const successes = res.data.files.filter((f) => f.success);
@@ -172,7 +177,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       if (successes.length > 0) {
         addToast(
           'success',
-          encryptUpload
+          encrypt
             ? `Encrypted upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`
             : `Standard upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`,
         );
@@ -200,6 +205,21 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
         return;
       }
       addToast('error', res.error?.message ?? 'Download failed');
+    }
+  };
+
+  const handleViewEncrypted = async (fileId: string, name: string) => {
+    const res = await window.sccfs.files.viewEncrypted(sessionId, fileId);
+    if (res.ok) {
+      addToast('success', `Secure temp view opened for "${name}"`);
+      return;
+    }
+    if (res.error?.code === 'DECRYPTION_FAILED_AUTH_TAG') {
+      addToast('error', 'File failed integrity check or is corrupted.');
+      return;
+    }
+    if (res.error?.code !== 'CANCELLED') {
+      addToast('error', res.error?.message ?? 'Unable to securely view this file');
     }
   };
 
@@ -489,22 +509,6 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
           </div>
 
           <div style={{ display: 'flex', gap: 8 }}>
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                fontSize: 12,
-                color: 'var(--text-secondary)',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={encryptUpload}
-                onChange={(e) => setEncryptUpload(e.target.checked)}
-              />
-              Encrypt
-            </label>
             <select
               value={sourceHandlingMode}
               onChange={(e) => setSourceHandlingMode(e.target.value as SourceHandlingMode)}
@@ -672,6 +676,15 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                           >
                             ⬇
                           </button>
+                          {f.is_encrypted ? (
+                            <button
+                              onClick={() => handleViewEncrypted(f.id, f.original_name)}
+                              style={btnStyle('ghost', true)}
+                              title="View (secure temp file)"
+                            >
+                              👁
+                            </button>
+                          ) : null}
                           <button
                             onClick={() => setMoveModal([f.id])}
                             style={btnStyle('ghost', true)}

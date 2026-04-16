@@ -108,6 +108,10 @@ export interface FileUploadResult {
   files: FileUploadItemResult[];
 }
 
+export interface SecureTempViewResult {
+  cleanupAfterMs: number;
+}
+
 /** Shelf record with aggregate counts. */
 export interface ShelfRecord {
   id: string;
