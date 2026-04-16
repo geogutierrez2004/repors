@@ -110,6 +110,9 @@ describe('AuthService', () => {
       expect(file.uploaded_by).toBe(canonical.id);
       expect(auth.validateSession(legacySession.sessionId)).toBeNull();
       expect(auth.validateSession(extraSession.sessionId)).toBeNull();
+
+      const consolidatedLogin = await auth.login('fs_adm1', 'admin123');
+      expect(consolidatedLogin.user.username).toBe('fs_adm1');
     });
   });
 

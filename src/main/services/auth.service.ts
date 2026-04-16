@@ -225,11 +225,6 @@ export class AuthService {
     const canonicalUserId = preferredUser.id;
     const extraUserIds = users.filter((u) => u.id !== canonicalUserId).map((u) => u.id);
 
-    destroyUserSessions(canonicalUserId);
-    for (const userId of extraUserIds) {
-      destroyUserSessions(userId);
-    }
-
     const consolidateTransaction = this.db.transaction(() => {
       if (extraUserIds.length > 0) {
         const placeholders = extraUserIds.map(() => '?').join(', ');
@@ -263,6 +258,10 @@ export class AuthService {
     });
 
     consolidateTransaction();
+    destroyUserSessions(canonicalUserId);
+    for (const userId of extraUserIds) {
+      destroyUserSessions(userId);
+    }
   }
 
   // ── Private helpers ──────────────────
