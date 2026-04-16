@@ -17,6 +17,7 @@ import type {
   SecureTempViewResult,
   SecureTempViewCleanupResult,
   SourceHandlingMode,
+  FilePreviewData,
 } from '../shared/types';
 
 declare global {
@@ -68,6 +69,11 @@ declare global {
           confirmPermanentDelete?: boolean,
         ): Promise<IpcResponse<FileUploadResult>>;
         download(sessionId: string, fileId: string, decryptionPassword?: string): Promise<IpcResponse<null>>;
+        getPreview(
+          sessionId: string,
+          fileId: string,
+          decryptionPassword?: string,
+        ): Promise<IpcResponse<FilePreviewData>>;
         viewEncrypted(
           sessionId: string,
           fileId: string,

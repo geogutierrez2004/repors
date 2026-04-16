@@ -15,6 +15,7 @@ import {
   FileListSchema,
   FileUploadSchema,
   FileDownloadSchema,
+  FilePreviewSchema,
   FileViewEncryptedSchema,
   FileViewEncryptedCleanupSchema,
   FileDeleteSchema,
@@ -65,6 +66,7 @@ const DASHBOARD_CHANNELS = [
   IPC_CHANNELS.FILES_LIST,
   IPC_CHANNELS.FILES_UPLOAD,
   IPC_CHANNELS.FILES_DOWNLOAD,
+  IPC_CHANNELS.FILES_PREVIEW,
   IPC_CHANNELS.FILES_VIEW_ENCRYPTED,
   IPC_CHANNELS.FILES_VIEW_ENCRYPTED_CLEANUP,
   IPC_CHANNELS.FILES_DELETE,
@@ -141,6 +143,16 @@ export function registerDashboardHandlers(
         const win = getSenderWindow(event);
         await dashboardService.downloadFile(sessionId, fileId, decryptionPassword, win);
         return ok(null);
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
+
+  ipcMain.handle(IPC_CHANNELS.FILES_PREVIEW, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId, fileId, decryptionPassword } = FilePreviewSchema.parse(payload);
+        return ok(await dashboardService.getFilePreview(sessionId, fileId, decryptionPassword));
       } catch (e) {
         return handleError(e);
       }

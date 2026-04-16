@@ -102,6 +102,12 @@ export const FileDownloadSchema = z.object({
   decryptionPassword: z.string().min(1).max(1024).optional(),
 });
 
+export const FilePreviewSchema = z.object({
+  sessionId: z.string().uuid(),
+  fileId: z.string().uuid(),
+  decryptionPassword: z.string().min(1).max(1024).optional(),
+});
+
 export const FileViewEncryptedSchema = z.object({
   sessionId: z.string().uuid(),
   fileId: z.string().uuid(),
