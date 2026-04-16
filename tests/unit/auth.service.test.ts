@@ -44,6 +44,66 @@ describe('AuthService', () => {
       const users = db.prepare('SELECT COUNT(*) as cnt FROM users').get() as { cnt: number };
       expect(users.cnt).toBe(1);
     });
+
+    it('should replace an existing single account with fs_adm1/admin123', async () => {
+      await auth.seedDefaultAdmin('legacy_admin', 'Legacy@1234');
+      await auth.seedDefaultAdmin('fs_adm1', 'admin123');
+
+      const users = db
+        .prepare('SELECT username, role, is_active, failed_attempts, locked_until FROM users')
+        .all() as Array<{
+        username: string;
+        role: Role;
+        is_active: number;
+        failed_attempts: number;
+        locked_until: number | null;
+      }>;
+
+      expect(users).toHaveLength(1);
+      expect(users[0].username).toBe('fs_adm1');
+      expect(users[0].role).toBe(Role.ADMIN);
+      expect(users[0].is_active).toBe(1);
+      expect(users[0].failed_attempts).toBe(0);
+      expect(users[0].locked_until).toBeNull();
+
+      const result = await auth.login('fs_adm1', 'admin123');
+      expect(result.user.username).toBe('fs_adm1');
+    });
+
+    it('should consolidate multiple users into one fs_adm1 account and reassign references', async () => {
+      await auth.seedDefaultAdmin('legacy_admin', 'Legacy@1234');
+      const canonical = db.prepare('SELECT id FROM users LIMIT 1').get() as { id: string };
+
+      const extraUserId = '22222222-2222-4222-a222-222222222222';
+      db.prepare(
+        `INSERT INTO users (id, username, password_hash, role)
+         VALUES (?, ?, ?, ?)`,
+      ).run(extraUserId, 'old_staff', '$argon2id$dummy', Role.STAFF);
+
+      const shelfId = '33333333-3333-4333-a333-333333333333';
+      const fileId = '44444444-4444-4444-a444-444444444444';
+      db.prepare('INSERT INTO shelves (id, name, created_by) VALUES (?, ?, ?)').run(
+        shelfId,
+        'Legacy Shelf',
+        extraUserId,
+      );
+      db.prepare(
+        `INSERT INTO files (id, original_name, stored_name, size_bytes, sha256, shelf_id, uploaded_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run(fileId, 'legacy.txt', 'legacy.bin', 1, 'abc123', shelfId, extraUserId);
+
+      await auth.seedDefaultAdmin('fs_adm1', 'admin123');
+
+      const users = db.prepare('SELECT id, username FROM users').all() as Array<{ id: string; username: string }>;
+      expect(users).toHaveLength(1);
+      expect(users[0].username).toBe('fs_adm1');
+      expect(users[0].id).toBe(canonical.id);
+
+      const shelf = db.prepare('SELECT created_by FROM shelves WHERE id = ?').get(shelfId) as { created_by: string };
+      const file = db.prepare('SELECT uploaded_by FROM files WHERE id = ?').get(fileId) as { uploaded_by: string };
+      expect(shelf.created_by).toBe(canonical.id);
+      expect(file.uploaded_by).toBe(canonical.id);
+    });
   });
 
   // ── Login edge cases ──────────────────

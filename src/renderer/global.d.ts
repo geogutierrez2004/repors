@@ -32,12 +32,6 @@ declare global {
 
       users: {
         list(sessionId: string): Promise<IpcResponse<SafeUser[]>>;
-        create(
-          sessionId: string,
-          username: string,
-          password: string,
-          role: string,
-        ): Promise<IpcResponse<SafeUser>>;
         update(
           sessionId: string,
           userId: string,

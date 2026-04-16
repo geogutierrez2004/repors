@@ -15,7 +15,6 @@ import {
   ValidateSessionSchema,
   ChangePasswordSchema,
   GetCurrentUserSchema,
-  CreateUserSchema,
   UpdateUserSchema,
   DeleteUserSchema,
   ResetPasswordSchema,
@@ -110,16 +109,6 @@ export function registerAuthHandlers(authService: AuthService): void {
       const { sessionId } = ListUsersSchema.parse(payload);
       const users = authService.listUsers(sessionId);
       return ok(users);
-    } catch (e) {
-      return handleError(e);
-    }
-  });
-
-  ipcMain.handle(IPC_CHANNELS.USERS_CREATE, async (_event, payload: unknown) => {
-    try {
-      const { sessionId, username, password, role } = CreateUserSchema.parse(payload);
-      const user = await authService.createUser(sessionId, username, password, role);
-      return ok(user);
     } catch (e) {
       return handleError(e);
     }

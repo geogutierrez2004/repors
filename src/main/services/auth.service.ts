@@ -204,19 +204,60 @@ export class AuthService {
   // ── Seed default admin ───────────────
 
   async seedDefaultAdmin(username: string, password: string): Promise<void> {
-    const count = (
-      this.db.prepare('SELECT COUNT(*) as cnt FROM users').get() as { cnt: number }
-    ).cnt;
-    if (count > 0) return; // Already seeded
-
-    const id = uuidv4();
+    const users = this.db
+      .prepare('SELECT id, username FROM users ORDER BY created_at ASC, id ASC')
+      .all() as Array<{ id: string; username: string }>;
     const hash = await hashPassword(password);
-    this.db
-      .prepare(
-        `INSERT INTO users (id, username, password_hash, role)
-         VALUES (?, ?, ?, ?)`,
-      )
-      .run(id, username, hash, Role.ADMIN);
+
+    if (users.length === 0) {
+      const id = uuidv4();
+      this.db
+        .prepare(
+          `INSERT INTO users (id, username, password_hash, role)
+           VALUES (?, ?, ?, ?)`,
+        )
+        .run(id, username, hash, Role.ADMIN);
+      return;
+    }
+
+    const preferredUser =
+      users.find((u) => u.username.toLowerCase() === username.toLowerCase()) ?? users[0];
+    const canonicalUserId = preferredUser.id;
+    const extraUserIds = users.filter((u) => u.id !== canonicalUserId).map((u) => u.id);
+
+    const tx = this.db.transaction(() => {
+      if (extraUserIds.length > 0) {
+        const placeholders = extraUserIds.map(() => '?').join(', ');
+
+        this.db
+          .prepare(`UPDATE shelves SET created_by = ? WHERE created_by IN (${placeholders})`)
+          .run(canonicalUserId, ...extraUserIds);
+        this.db
+          .prepare(`UPDATE files SET uploaded_by = ? WHERE uploaded_by IN (${placeholders})`)
+          .run(canonicalUserId, ...extraUserIds);
+        this.db
+          .prepare(`UPDATE upload_history SET user_id = ? WHERE user_id IN (${placeholders})`)
+          .run(canonicalUserId, ...extraUserIds);
+        this.db
+          .prepare(`UPDATE downloads SET user_id = ? WHERE user_id IN (${placeholders})`)
+          .run(canonicalUserId, ...extraUserIds);
+        this.db
+          .prepare(`UPDATE activity_log SET user_id = ? WHERE user_id IN (${placeholders})`)
+          .run(canonicalUserId, ...extraUserIds);
+
+        this.db.prepare(`DELETE FROM users WHERE id IN (${placeholders})`).run(...extraUserIds);
+      }
+
+      this.db
+        .prepare(
+          `UPDATE users
+           SET username = ?, password_hash = ?, role = ?, is_active = 1, failed_attempts = 0, locked_until = NULL, updated_at = datetime('now')
+           WHERE id = ?`,
+        )
+        .run(username, hash, Role.ADMIN, canonicalUserId);
+    });
+
+    tx();
   }
 
   // ── Private helpers ──────────────────

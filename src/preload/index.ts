@@ -57,9 +57,6 @@ const api = {
     list: (sessionId: string) =>
       safeInvoke<SafeUser[]>(IPC_CHANNELS.USERS_LIST, { sessionId }),
 
-    create: (sessionId: string, username: string, password: string, role: string) =>
-      safeInvoke<SafeUser>(IPC_CHANNELS.USERS_CREATE, { sessionId, username, password, role }),
-
     update: (sessionId: string, userId: string, updates: { role?: string; is_active?: boolean }) =>
       safeInvoke<SafeUser>(IPC_CHANNELS.USERS_UPDATE, { sessionId, userId, ...updates }),
 
@@ -164,4 +161,3 @@ contextBridge.exposeInMainWorld('sccfs', api);
 
 /** TypeScript declaration for renderer usage. */
 export type SccfsApi = typeof api;
-
