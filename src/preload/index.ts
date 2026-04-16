@@ -24,6 +24,7 @@ import type {
   SecureTempViewResult,
   SecureTempViewCleanupResult,
   SourceHandlingMode,
+  FilePreviewData,
 } from '../shared/types';
 
 /**
@@ -110,6 +111,9 @@ const api = {
 
     download: (sessionId: string, fileId: string, decryptionPassword?: string) =>
       safeInvoke(IPC_CHANNELS.FILES_DOWNLOAD, { sessionId, fileId, decryptionPassword }),
+
+    getPreview: (sessionId: string, fileId: string, decryptionPassword?: string) =>
+      safeInvoke<FilePreviewData>(IPC_CHANNELS.FILES_PREVIEW, { sessionId, fileId, decryptionPassword }),
 
     viewEncrypted: (sessionId: string, fileId: string, decryptionPassword: string) =>
       safeInvoke<SecureTempViewResult>(IPC_CHANNELS.FILES_VIEW_ENCRYPTED, { sessionId, fileId, decryptionPassword }),

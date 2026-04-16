@@ -90,6 +90,36 @@ export interface FileRecord {
   is_encrypted: boolean;
   created_at: string;
   updated_at: string;
+  classification?: FileClassification;
+}
+
+export type FilePreviewCategory = 'native' | 'convertible' | 'unsupported';
+export type FilePreviewConverter = 'docx-to-html' | 'xlsx-to-html' | null;
+export type FilePreviewRenderer = 'pdf' | 'image' | 'text' | 'html' | 'download';
+export type FilePreviewFileType =
+  | 'pdf'
+  | 'image'
+  | 'text'
+  | 'html'
+  | 'docx'
+  | 'xlsx'
+  | 'unknown';
+
+export interface FileClassification {
+  category: FilePreviewCategory;
+  renderingTier: 1 | 2 | 3;
+  fileType: FilePreviewFileType;
+  renderer: FilePreviewRenderer;
+  converter: FilePreviewConverter;
+  mimeType: string | null;
+}
+
+export interface FilePreviewData {
+  fileName: string;
+  fileContent: string;
+  mimeType: string | null;
+  classification: FileClassification;
+  note?: string;
 }
 
 export type SourceHandlingMode = 'keep_original' | 'move_to_system' | 'ask_each_time';

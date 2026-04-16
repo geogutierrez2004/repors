@@ -5,11 +5,12 @@
  * download, move to shelf, and delete. Shelf filter shown in a left column. Selection
  * supports bulk operations.
  */
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import type { FileRecord, ShelfRecord, PaginatedResult, SourceHandlingMode } from '../../shared/types';
 import type { AddToast } from '../App';
 import type { SafeUser } from '../../shared/types';
 import { cardStyle, btnStyle } from '../App';
+import { FileViewer } from '../components/FileViewer';
 
 interface Props {
   sessionId: string;
@@ -34,38 +35,6 @@ export function validateEncryptionPasswords(password: string, confirmPassword: s
   return null;
 }
 
-type PreviewKind = 'pdf' | 'image' | 'text' | 'audio' | 'video' | 'fallback';
-
-function getPreviewKind(mimeType: string | null, fileName: string): PreviewKind {
-  const mime = (mimeType ?? '').toLowerCase();
-  const lowerName = fileName.toLowerCase();
-  if (mime === 'application/pdf' || lowerName.endsWith('.pdf')) return 'pdf';
-  if (mime.startsWith('image/')) return 'image';
-  if (mime.startsWith('audio/')) return 'audio';
-  if (mime.startsWith('video/')) return 'video';
-  if (
-    mime.startsWith('text/')
-    || lowerName.endsWith('.txt')
-    || lowerName.endsWith('.md')
-    || lowerName.endsWith('.csv')
-    || lowerName.endsWith('.json')
-    || lowerName.endsWith('.xml')
-    || lowerName.endsWith('.log')
-  ) {
-    return 'text';
-  }
-  return 'fallback';
-}
-
-function decodeBase64ToBytes(contentBase64: string): Uint8Array {
-  const binary = atob(contentBase64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
-}
-
 function fmtBytes(b: number): string {
   if (b >= 1e9) return `${(b / 1e9).toFixed(2)} GB`;
   if (b >= 1e6) return `${(b / 1e6).toFixed(1)} MB`;
@@ -75,6 +44,33 @@ function fmtBytes(b: number): string {
 
 function fmtDate(ts: string): string {
   return new Date(ts).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function canPreviewFile(file: FileRecord): boolean {
+  if (file.classification) return file.classification.category !== 'unsupported';
+  const name = file.original_name.toLowerCase();
+  const mime = (file.mime_type ?? '').toLowerCase();
+  return (
+    mime === 'application/pdf'
+    || mime.startsWith('image/')
+    || mime.startsWith('text/')
+    || mime === 'text/html'
+    || name.endsWith('.pdf')
+    || name.endsWith('.png')
+    || name.endsWith('.jpg')
+    || name.endsWith('.jpeg')
+    || name.endsWith('.gif')
+    || name.endsWith('.webp')
+    || name.endsWith('.svg')
+    || name.endsWith('.txt')
+    || name.endsWith('.md')
+    || name.endsWith('.csv')
+    || name.endsWith('.json')
+    || name.endsWith('.html')
+    || name.endsWith('.htm')
+    || name.endsWith('.docx')
+    || name.endsWith('.xlsx')
+  );
 }
 
 // ────────────────────────────────────────
@@ -164,7 +160,6 @@ function OverlayModal({ children }: { children: React.ReactNode }) {
 
 export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Element {
   const isAdmin = user.role === 'admin';
-  const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [shelves, setShelves] = useState<ShelfRecord[]>([]);
   const [files, setFiles] = useState<PaginatedResult<FileRecord>>({
@@ -190,15 +185,14 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const [uploadPassword, setUploadPassword] = useState('');
   const [uploadPasswordConfirm, setUploadPasswordConfirm] = useState('');
   const [uploadPasswordError, setUploadPasswordError] = useState<string | null>(null);
-  const [decryptPrompt, setDecryptPrompt] = useState<{ fileId: string; name: string; mode: 'download' | 'view' } | null>(null);
+  const [decryptPrompt, setDecryptPrompt] = useState<{ fileId: string; name: string } | null>(null);
   const [decryptionPassword, setDecryptionPassword] = useState('');
   const [decryptionError, setDecryptionError] = useState<string | null>(null);
-  const [viewer, setViewer] = useState<{
-    viewId: string;
+  const [activeViewerFile, setActiveViewerFile] = useState<{
+    fileId: string;
     fileName: string;
     mimeType: string | null;
-    contentBase64: string;
-    cleanupAfterMs: number;
+    isEncrypted: boolean;
   } | null>(null);
 
   const loadShelves = useCallback(async () => {
@@ -231,47 +225,6 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   useEffect(() => {
     setSelected(new Set());
   }, [page, selectedShelf, search]);
-
-  const previewKind = useMemo(
-    () => (viewer ? getPreviewKind(viewer.mimeType, viewer.fileName) : 'fallback'),
-    [viewer],
-  );
-  const viewerDataUrl = useMemo(() => {
-    if (!viewer) return '';
-    const mime = viewer.mimeType ?? 'application/octet-stream';
-    return `data:${mime};base64,${viewer.contentBase64}`;
-  }, [viewer]);
-  const viewerTextContent = useMemo(() => {
-    if (!viewer || previewKind !== 'text') return '';
-    return new TextDecoder().decode(decodeBase64ToBytes(viewer.contentBase64));
-  }, [viewer, previewKind]);
-
-  useEffect(() => {
-    if (!viewer || previewKind !== 'pdf' || !pdfCanvasRef.current) return;
-    let cancelled = false;
-    const render = async () => {
-      try {
-        const { getDocument } = await import('pdfjs-dist/build/pdf.mjs');
-        const bytes = decodeBase64ToBytes(viewer.contentBase64);
-        const doc = await getDocument({ data: bytes, disableWorker: true }).promise;
-        const page1 = await doc.getPage(1);
-        const viewport = page1.getViewport({ scale: 1.25 });
-        const canvas = pdfCanvasRef.current;
-        if (!canvas || cancelled) return;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        await page1.render({ canvasContext: ctx, viewport }).promise;
-      } catch {
-        addToast('error', 'Unable to render PDF preview.');
-      }
-    };
-    void render();
-    return () => {
-      cancelled = true;
-    };
-  }, [viewer, previewKind, addToast]);
 
   const performUpload = async (encrypt: boolean, encryptionPassword?: string) => {
     if (!selectedShelf) return;
@@ -331,7 +284,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
 
   const handleDownload = async (fileId: string, name: string, encrypted: boolean) => {
     if (encrypted) {
-      setDecryptPrompt({ fileId, name, mode: 'download' });
+      setDecryptPrompt({ fileId, name });
       setDecryptionPassword('');
       setDecryptionError(null);
       return;
@@ -348,10 +301,13 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     }
   };
 
-  const handleViewEncrypted = async (fileId: string, name: string) => {
-    setDecryptPrompt({ fileId, name, mode: 'view' });
-    setDecryptionPassword('');
-    setDecryptionError(null);
+  const handleOpenViewer = (file: FileRecord) => {
+    setActiveViewerFile({
+      fileId: file.id,
+      fileName: file.original_name,
+      mimeType: file.mime_type,
+      isEncrypted: !!file.is_encrypted,
+    });
   };
 
   const handleUploadDecision = async (decision: UploadEncryptionDecision) => {
@@ -390,49 +346,19 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       setDecryptionError('Password is required.');
       return;
     }
-    if (decryptPrompt.mode === 'download') {
-      const res = await window.sccfs.files.download(sessionId, decryptPrompt.fileId, password);
-      if (res.ok) {
-        addToast('success', `Decrypted and downloaded "${decryptPrompt.name}"`);
-        setDecryptPrompt(null);
-        setDecryptionPassword('');
-        setDecryptionError(null);
-        return;
-      }
-      if (res.error?.code === 'DECRYPTION_FAILED_AUTH_TAG') {
-        addToast('error', 'File failed integrity check or is corrupted.');
-      } else if (res.error?.code !== 'CANCELLED') {
-        addToast('error', res.error?.message ?? 'Download failed');
-      }
-      return;
-    }
-
-    const res = await window.sccfs.files.viewEncrypted(sessionId, decryptPrompt.fileId, password);
+    const res = await window.sccfs.files.download(sessionId, decryptPrompt.fileId, password);
     if (res.ok) {
-      setViewer(res.data);
+      addToast('success', `Decrypted and downloaded "${decryptPrompt.name}"`);
       setDecryptPrompt(null);
       setDecryptionPassword('');
       setDecryptionError(null);
-      addToast('success', `In-app secure preview opened for "${decryptPrompt.name}".`);
       return;
     }
     if (res.error?.code === 'DECRYPTION_FAILED_AUTH_TAG') {
       addToast('error', 'File failed integrity check or is corrupted.');
     } else if (res.error?.code !== 'CANCELLED') {
-      addToast('error', res.error?.message ?? 'Unable to securely view this file');
+      addToast('error', res.error?.message ?? 'Download failed');
     }
-  };
-
-  const closeViewer = async () => {
-    if (!viewer) return;
-    const viewId = viewer.viewId;
-    setViewer(null);
-    const cleanupRes = await window.sccfs.files.cleanupEncryptedView(sessionId, viewId);
-    if (cleanupRes.ok && cleanupRes.data.deleted) {
-      addToast('info', 'Temporary decrypted preview file deleted.');
-      return;
-    }
-    addToast('info', 'Temporary preview file will be removed automatically shortly.');
   };
 
   const handleDelete = async (ids: string[]) => {
@@ -888,11 +814,11 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                           >
                             ⬇
                           </button>
-                          {f.is_encrypted ? (
+                          {canPreviewFile(f) ? (
                             <button
-                              onClick={() => handleViewEncrypted(f.id, f.original_name)}
+                              onClick={() => handleOpenViewer(f)}
                               style={btnStyle('ghost', true)}
-                              title="View (secure temp file)"
+                              title="View"
                             >
                               👁
                             </button>
@@ -1015,9 +941,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       )}
       {decryptPrompt && (
         <OverlayModal>
-          <h3 style={{ marginTop: 0, marginBottom: 12 }}>
-            {decryptPrompt.mode === 'view' ? 'Password Required for Preview' : 'Password Required for Download'}
-          </h3>
+          <h3 style={{ marginTop: 0, marginBottom: 12 }}>Password Required for Download</h3>
           <p style={{ marginTop: 0, marginBottom: 12, color: 'var(--text-secondary)', fontSize: 13 }}>
             Enter the encryption password for "{decryptPrompt.name}".
           </p>
@@ -1051,29 +975,15 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
           </div>
         </OverlayModal>
       )}
-      {viewer && (
-        <OverlayModal>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-            <h3 style={{ margin: 0 }}>Secure In-App Viewer</h3>
-            <button onClick={() => void closeViewer()} style={btnStyle('secondary', true)}>Close</button>
-          </div>
-          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>{viewer.fileName}</div>
-          <div style={{ marginTop: 14, maxHeight: '70vh', overflow: 'auto', border: '1px solid var(--border)', borderRadius: 6, padding: 10 }}>
-            {previewKind === 'pdf' && <canvas ref={pdfCanvasRef} style={{ maxWidth: '100%', display: 'block' }} />}
-            {previewKind === 'image' && <img alt={viewer.fileName} src={viewerDataUrl} style={{ maxWidth: '100%', maxHeight: '65vh' }} />}
-            {previewKind === 'text' && <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{viewerTextContent}</pre>}
-            {previewKind === 'audio' && <audio controls src={viewerDataUrl} style={{ width: '100%' }} />}
-            {previewKind === 'video' && <video controls src={viewerDataUrl} style={{ width: '100%', maxHeight: '65vh' }} />}
-            {previewKind === 'fallback' && (
-              <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
-                This file type is not supported for in-app preview. Please use Download to access the file.
-              </div>
-            )}
-          </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
-            A temporary decrypted copy used for preview is auto-deleted in about {Math.round(viewer.cleanupAfterMs / 1000)} seconds.
-          </div>
-        </OverlayModal>
+      {activeViewerFile && (
+        <FileViewer
+          sessionId={sessionId}
+          fileId={activeViewerFile.fileId}
+          fileName={activeViewerFile.fileName}
+          mimeType={activeViewerFile.mimeType}
+          isEncrypted={activeViewerFile.isEncrypted}
+          onClose={() => setActiveViewerFile(null)}
+        />
       )}
     </div>
   );

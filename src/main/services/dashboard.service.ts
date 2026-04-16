@@ -34,8 +34,11 @@ import type {
   FileUploadItemResult,
   SecureTempViewResult,
   SecureTempViewCleanupResult,
+  FilePreviewData,
 } from '../../shared/types';
 import { normalizeExtension, guessExtensionFromMime } from '../utils/file-extension';
+import { classifyFile } from '../utils/file-classification';
+import { convertDocxToHtml, convertXlsxToHtml } from '../utils/file-converter';
 
 // ────────────────────────────────────────
 // Helpers
@@ -321,6 +324,10 @@ export class DashboardService {
          LIMIT ? OFFSET ?`,
       )
       .all(...params, opts.pageSize, offset) as FileRecord[];
+
+    for (const item of items) {
+      item.classification = classifyFile(item.original_name, item.mime_type);
+    }
 
     return { items, total, page: opts.page, pageSize: opts.pageSize };
   }
@@ -616,6 +623,72 @@ export class DashboardService {
       .run(uuidv4(), fileId, session.userId);
 
     this.logActivity(session.userId, 'FILE_DOWNLOAD', `Downloaded ${fileRow.original_name}`);
+  }
+
+  async getFilePreview(
+    sessionId: string,
+    fileId: string,
+    decryptionPassword?: string,
+  ): Promise<FilePreviewData> {
+    const session = requireAuth(sessionId);
+    requirePermission(session.role, Permission.FILE_DOWNLOAD);
+
+    const fileRow = this.db
+      .prepare('SELECT * FROM files WHERE id = ?')
+      .get(fileId) as (FileRecord & { stored_name: string }) | undefined;
+    if (!fileRow) throw new AuthError('NOT_FOUND', 'File not found');
+
+    const classification = classifyFile(fileRow.original_name, fileRow.mime_type);
+    const resolvedName = this.resolveDownloadFileName(fileRow);
+    if (classification.category === 'unsupported') {
+      return {
+        fileName: resolvedName,
+        fileContent: '',
+        mimeType: fileRow.mime_type,
+        classification,
+      };
+    }
+
+    const srcPath = path.join(getFilesDir(), fileRow.stored_name);
+    if (!fs.existsSync(srcPath)) {
+      throw new AuthError('FILE_MISSING', 'File data not found on disk');
+    }
+
+    let fileBuffer: Buffer;
+    if (!fileRow.is_encrypted) {
+      fileBuffer = fs.readFileSync(srcPath);
+    } else {
+      const normalizedPassword = decryptionPassword?.trim();
+      if (!normalizedPassword) {
+        throw new AuthError('DECRYPTION_PASSWORD_REQUIRED', 'Password is required to decrypt this file.');
+      }
+      fileBuffer = this.decryptEncryptedPayloadToBuffer(fileId, srcPath, normalizedPassword);
+    }
+
+    if (classification.category === 'convertible') {
+      const converted = classification.converter === 'docx-to-html'
+        ? await convertDocxToHtml(fileBuffer)
+        : convertXlsxToHtml(fileBuffer);
+      if (!converted.ok || !converted.html) {
+        throw new AuthError('PREVIEW_CONVERSION_FAILED', converted.error ?? 'Conversion failed');
+      }
+      this.logActivity(session.userId, 'FILE_VIEW', `Previewed converted ${fileRow.original_name}`);
+      return {
+        fileName: resolvedName,
+        fileContent: Buffer.from(converted.html, 'utf-8').toString('base64'),
+        mimeType: 'text/html',
+        classification,
+        note: 'Converted for preview; original file is not modified.',
+      };
+    }
+
+    this.logActivity(session.userId, 'FILE_VIEW', `Previewed ${fileRow.original_name}`);
+    return {
+      fileName: resolvedName,
+      fileContent: fileBuffer.toString('base64'),
+      mimeType: fileRow.mime_type,
+      classification,
+    };
   }
 
   async viewEncryptedFile(
@@ -1120,7 +1193,7 @@ export class DashboardService {
   // ── Private helpers ──────────────────
 
   private getFileRecord(fileId: string): FileRecord {
-    return this.db
+    const record = this.db
       .prepare(
         `SELECT f.id, f.original_name, f.original_extension, f.stored_name, f.mime_type, f.size_bytes, f.sha256,
                 f.shelf_id, s.name as shelf_name,
@@ -1132,6 +1205,8 @@ export class DashboardService {
          WHERE f.id = ?`,
       )
       .get(fileId) as FileRecord;
+    record.classification = classifyFile(record.original_name, record.mime_type);
+    return record;
   }
 
   private getShelfRecord(shelfId: string): ShelfRecord {
@@ -1202,6 +1277,41 @@ export class DashboardService {
         throw new AuthError('DECRYPTION_FAILED_AUTH_TAG', 'File failed integrity check or is corrupted.');
       }
       throw new AuthError('DECRYPTION_FAILED_IO', 'Failed to decrypt and write file');
+    }
+  }
+
+  private decryptEncryptedPayloadToBuffer(
+    fileId: string,
+    srcPath: string,
+    decryptionPassword: string,
+  ): Buffer {
+    const metadata = this.db
+      .prepare('SELECT salt, iv, auth_tag, iterations FROM encryption_keys WHERE file_id = ?')
+      .get(fileId) as
+      | { salt: string; iv: string; auth_tag: string; iterations: number }
+      | undefined;
+
+    if (!metadata || !metadata.salt || !metadata.iv || !metadata.auth_tag || !metadata.iterations) {
+      throw new AuthError('ENCRYPTION_METADATA_MISSING', 'Encryption metadata is missing for this file');
+    }
+
+    try {
+      const salt = Buffer.from(metadata.salt, 'base64');
+      const iv = Buffer.from(metadata.iv, 'base64');
+      const authTag = Buffer.from(metadata.auth_tag, 'base64');
+      const key = this.deriveFileKey(decryptionPassword, salt, metadata.iterations);
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAuthTag(authTag);
+      const encrypted = fs.readFileSync(srcPath);
+      return Buffer.concat([decipher.update(encrypted), decipher.final()]);
+    } catch (e) {
+      const errorCode = extractErrorCode(e);
+      const authTagErrorCodes = new Set(['ERR_OSSL_EVP_BAD_DECRYPT']);
+      const message = e instanceof Error ? e.message.toLowerCase() : '';
+      if (authTagErrorCodes.has(errorCode) || message.includes('auth') || message.includes('authenticate')) {
+        throw new AuthError('DECRYPTION_FAILED_AUTH_TAG', 'File failed integrity check or is corrupted.');
+      }
+      throw new AuthError('DECRYPTION_FAILED_IO', 'Failed to decrypt file for preview');
     }
   }
 
