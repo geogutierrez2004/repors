@@ -81,6 +81,17 @@ function computeSha256(filePath: string): string {
   return hash.digest('hex');
 }
 
+function countFilesRecursive(dirPath: string): number {
+  if (!fs.existsSync(dirPath)) return 0;
+  let count = 0;
+  for (const entry of fs.readdirSync(dirPath, { withFileTypes: true })) {
+    const fullPath = path.join(dirPath, entry.name);
+    if (entry.isDirectory()) count += countFilesRecursive(fullPath);
+    else if (entry.isFile()) count += 1;
+  }
+  return count;
+}
+
 // ────────────────────────────────────────
 // Dashboard service
 // ────────────────────────────────────────
@@ -610,22 +621,53 @@ export class DashboardService {
     const session = requireAuth(sessionId);
     requirePermission(session.role, Permission.STORAGE_BACKUP);
 
-    const defaultName = `sccfs-backup-${new Date().toISOString().slice(0, 10)}.db`;
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const defaultName = `sccfs-backup-${timestamp}`;
 
     const { filePath, canceled } = await dialog.showSaveDialog(win, {
-      title: 'Save Database Backup',
+      title: 'Choose Backup Folder',
       defaultPath: path.join(getBackupsDir(), defaultName),
-      filters: [{ name: 'SQLite Database', extensions: ['db'] }],
+      buttonLabel: 'Create Backup Folder',
+      properties: ['createDirectory', 'showOverwriteConfirmation'],
     });
 
     if (canceled || !filePath) throw new AuthError('CANCELLED', 'Backup cancelled');
 
+    const backupDir = filePath;
+    const backupDbPath = path.join(backupDir, 'sccfs.db');
+    const backupFilesDir = path.join(backupDir, 'files');
+    const backupMetaPath = path.join(backupDir, 'meta.json');
+
+    fs.mkdirSync(backupDir, { recursive: true });
+
     // WAL checkpoint before backup
     this.db.pragma('wal_checkpoint(TRUNCATE)');
-    await this.db.backup(filePath);
+    await this.db.backup(backupDbPath);
 
-    this.logActivity(session.userId, 'STORAGE_BACKUP', `Database backed up to ${path.basename(filePath)}`);
-    return { path: filePath };
+    fs.rmSync(backupFilesDir, { recursive: true, force: true });
+    fs.mkdirSync(backupFilesDir, { recursive: true });
+    fs.cpSync(getFilesDir(), backupFilesDir, { recursive: true });
+
+    const totals = this.db
+      .prepare('SELECT COUNT(*) as file_count, COALESCE(SUM(size_bytes), 0) as total_bytes FROM files')
+      .get() as { file_count: number; total_bytes: number };
+
+    const meta = {
+      version: 1,
+      createdAt: new Date().toISOString(),
+      counts: {
+        dbFiles: totals.file_count,
+        blobFiles: countFilesRecursive(backupFilesDir),
+        totalBytes: totals.total_bytes,
+      },
+      checksum: {
+        sccfsDbSha256: computeSha256(backupDbPath),
+      },
+    };
+    fs.writeFileSync(backupMetaPath, JSON.stringify(meta, null, 2), 'utf-8');
+
+    this.logActivity(session.userId, 'STORAGE_BACKUP', `Backup created at ${path.basename(backupDir)}`);
+    return { path: backupDir };
   }
 
   async restore(sessionId: string, win: BrowserWindow): Promise<void> {
@@ -633,43 +675,61 @@ export class DashboardService {
     requirePermission(session.role, Permission.STORAGE_RESTORE);
 
     const { filePaths, canceled } = await dialog.showOpenDialog(win, {
-      title: 'Restore from Backup',
-      filters: [{ name: 'SQLite Database', extensions: ['db'] }],
-      properties: ['openFile'],
+      title: 'Restore from Backup Folder',
+      properties: ['openDirectory'],
     });
 
     if (canceled || !filePaths.length) throw new AuthError('CANCELLED', 'Restore cancelled');
 
-    const backupPath = filePaths[0];
+    const backupDir = filePaths[0];
+    const backupDbPath = path.join(backupDir, 'sccfs.db');
+    const backupFilesDir = path.join(backupDir, 'files');
+
+    if (!fs.existsSync(backupDbPath) || !fs.statSync(backupDbPath).isFile()) {
+      throw new AuthError('INVALID_BACKUP', 'Backup folder is missing sccfs.db');
+    }
+    if (!fs.existsSync(backupFilesDir) || !fs.statSync(backupFilesDir).isDirectory()) {
+      throw new AuthError('INVALID_BACKUP', 'Backup folder is missing files directory');
+    }
 
     // Validate backup by opening it read-only
     let testDb: Database.Database | null = null;
     try {
-      testDb = new BetterSqlite3(backupPath, { readonly: true });
+      testDb = new BetterSqlite3(backupDbPath, { readonly: true });
       testDb.prepare('SELECT 1 FROM users LIMIT 1').get();
     } catch {
-      throw new AuthError('INVALID_BACKUP', 'Selected file is not a valid SCCFS backup');
+      throw new AuthError('INVALID_BACKUP', 'Selected folder is not a valid SCCFS backup');
     } finally {
       testDb?.close();
     }
 
     const currentPath = getDatabasePath();
     if (!currentPath) throw new AuthError('INTERNAL_ERROR', 'Cannot determine database path');
+    const currentFilesDir = getFilesDir();
 
     // Create a safety backup before overwriting in case restore fails
-    const safetyBackup = currentPath + '.pre-restore.bak';
+    const safetyRoot = fs.mkdtempSync(path.join(getBackupsDir(), 'pre-restore-'));
+    const safetyBackupDb = path.join(safetyRoot, 'sccfs.db');
+    const safetyBackupFiles = path.join(safetyRoot, 'files');
     this.db.close();
-    fs.copyFileSync(currentPath, safetyBackup);
+    fs.copyFileSync(currentPath, safetyBackupDb);
+    fs.cpSync(currentFilesDir, safetyBackupFiles, { recursive: true });
 
     try {
-      fs.copyFileSync(backupPath, currentPath);
+      fs.copyFileSync(backupDbPath, currentPath);
+      fs.rmSync(currentFilesDir, { recursive: true, force: true });
+      fs.mkdirSync(currentFilesDir, { recursive: true });
+      fs.cpSync(backupFilesDir, currentFilesDir, { recursive: true });
     } catch (copyErr) {
       // Restore from safety backup on failure
-      fs.copyFileSync(safetyBackup, currentPath);
+      fs.copyFileSync(safetyBackupDb, currentPath);
+      fs.rmSync(currentFilesDir, { recursive: true, force: true });
+      fs.mkdirSync(currentFilesDir, { recursive: true });
+      fs.cpSync(safetyBackupFiles, currentFilesDir, { recursive: true });
       throw new AuthError('RESTORE_FAILED', 'Failed to overwrite database during restore');
     } finally {
       // Always try to clean up the safety backup
-      fs.unlink(safetyBackup, () => null);
+      fs.rm(safetyRoot, { recursive: true, force: true }, () => null);
     }
 
     const newDb = new BetterSqlite3(currentPath);
@@ -679,7 +739,7 @@ export class DashboardService {
     this.db = newDb;
     runMigrations(newDb);
 
-    this.logActivity(session.userId, 'STORAGE_RESTORE', `Database restored from ${path.basename(backupPath)}`);
+    this.logActivity(session.userId, 'STORAGE_RESTORE', `Backup restored from ${path.basename(backupDir)}`);
   }
 
   // ── Sessions (security dashboard) ────
