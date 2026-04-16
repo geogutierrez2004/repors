@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import type { BrowserWindow } from 'electron';
 import { runMigrations } from '../../src/main/database';
 import { AuthService } from '../../src/main/services/auth.service';
@@ -71,10 +71,11 @@ describe('DashboardService.getFilePreview', () => {
   });
 
   it('converts XLSX into HTML preview', async () => {
-    const workbook = XLSX.utils.book_new();
-    const sheet = XLSX.utils.aoa_to_sheet([['Name', 'Value'], ['A', 1]]);
-    XLSX.utils.book_append_sheet(workbook, sheet, 'Sheet1');
-    const bytes = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Sheet1');
+    sheet.addRow(['Name', 'Value']);
+    sheet.addRow(['A', 1]);
+    const bytes = Buffer.from(await workbook.xlsx.writeBuffer());
 
     const fileId = uuidv4();
     const storedName = `${uuidv4()}.xlsx`;

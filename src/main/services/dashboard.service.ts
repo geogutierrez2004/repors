@@ -668,7 +668,7 @@ export class DashboardService {
     if (classification.category === 'convertible') {
       const converted = classification.converter === 'docx-to-html'
         ? await convertDocxToHtml(fileBuffer)
-        : convertXlsxToHtml(fileBuffer);
+        : await convertXlsxToHtml(fileBuffer);
       if (!converted.ok || !converted.html) {
         throw new AuthError('PREVIEW_CONVERSION_FAILED', converted.error ?? 'Conversion failed');
       }

@@ -1,5 +1,5 @@
 import mammoth from 'mammoth';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 
 export interface ConverterResult {
   ok: boolean;
@@ -28,17 +28,19 @@ export async function convertDocxToHtml(buffer: Buffer): Promise<ConverterResult
   }
 }
 
-export function convertXlsxToHtml(buffer: Buffer): ConverterResult {
+export async function convertXlsxToHtml(buffer: Buffer): Promise<ConverterResult> {
   try {
-    const workbook = XLSX.read(buffer, { type: 'buffer' });
-    const firstSheetName = workbook.SheetNames[0];
-    if (!firstSheetName) {
+    const workbook = new ExcelJS.Workbook();
+    const data = Uint8Array.from(buffer).buffer;
+    await workbook.xlsx.load(data);
+    const firstSheet = workbook.worksheets[0];
+    if (!firstSheet) {
       return { ok: false, error: 'Workbook has no sheets' };
     }
-    const sheet = workbook.Sheets[firstSheetName];
-    const rows = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(sheet, {
-      header: 1,
-      blankrows: false,
+    const rows: Array<Array<string | number | boolean | null>> = [];
+    firstSheet.eachRow({ includeEmpty: false }, (row) => {
+      const values = (row.values as Array<string | number | boolean | null | undefined>).slice(1);
+      rows.push(values.map((cell) => cell ?? null));
     });
 
     const htmlRows = rows.map((row, rowIndex) => {
