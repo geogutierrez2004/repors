@@ -22,7 +22,7 @@ interface Props {
 // ────────────────────────────────────────
 
 interface UserModalState {
-  mode: 'create' | 'reset-password' | 'change-password';
+  mode: 'reset-password' | 'change-password';
   userId?: string;
   username?: string;
 }
@@ -40,10 +40,8 @@ function UserModal({
   onClose: () => void;
   onDone: () => void;
 }) {
-  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
-  const [role, setRole] = useState('staff');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,11 +50,7 @@ function UserModal({
     setError(null);
     setLoading(true);
     try {
-      if (state.mode === 'create') {
-        const res = await window.sccfs.users.create(sessionId, username, password, role);
-        if (!res.ok) { setError(res.error?.message ?? 'Failed'); return; }
-        addToast('success', `User "${username}" created`);
-      } else if (state.mode === 'reset-password') {
+      if (state.mode === 'reset-password') {
         const res = await window.sccfs.users.resetPassword(sessionId, state.userId!, password);
         if (!res.ok) { setError(res.error?.message ?? 'Failed'); return; }
         addToast('success', `Password reset for "${state.username}"`);
@@ -73,7 +67,6 @@ function UserModal({
   };
 
   const titles = {
-    'create': 'Create New User',
     'reset-password': `Reset Password — ${state.username}`,
     'change-password': 'Change My Password',
   };
@@ -111,28 +104,6 @@ function UserModal({
           </div>
         )}
 
-        {state.mode === 'create' && (
-          <>
-            <label style={labelStyle}>Username</label>
-            <input
-              required
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              style={inputStyle}
-              autoFocus
-            />
-            <label style={labelStyle}>Role</label>
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-              style={inputStyle}
-            >
-              <option value="staff">Staff</option>
-              <option value="admin">Admin</option>
-            </select>
-          </>
-        )}
-
         {state.mode === 'change-password' && (
           <>
             <label style={labelStyle}>Current Password</label>
@@ -147,7 +118,7 @@ function UserModal({
         )}
 
         <label style={labelStyle}>
-          {state.mode === 'create' ? 'Password' : 'New Password'}
+          New Password
         </label>
         <input
           required
@@ -155,7 +126,7 @@ function UserModal({
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           style={{ ...inputStyle, marginBottom: 20 }}
-          autoFocus={state.mode !== 'create'}
+          autoFocus
         />
 
         <p style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 20 }}>
@@ -271,12 +242,6 @@ export function UserManagement({ sessionId, user, addToast }: Props): React.JSX.
             style={btnStyle('secondary')}
           >
             🔑 My Password
-          </button>
-          <button
-            onClick={() => setModal({ mode: 'create' })}
-            style={btnStyle('primary')}
-          >
-            + New User
           </button>
         </div>
       </div>
