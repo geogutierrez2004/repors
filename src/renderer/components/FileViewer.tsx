@@ -1,10 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import DOMPurify from 'dompurify';
-import { Document, Page, pdfjs } from 'react-pdf';
+import { Document, Page } from 'react-pdf';
 import type { FilePreviewData } from '../../shared/types';
 import { btnStyle, cardStyle } from '../App';
-
-pdfjs.GlobalWorkerOptions.workerSrc = '';
 
 interface FileViewerProps {
   sessionId: string;
