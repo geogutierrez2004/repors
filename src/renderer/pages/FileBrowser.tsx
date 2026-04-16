@@ -297,7 +297,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             ? `Encrypted upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`
             : `Standard upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`,
         );
-      } else {
+      } else if (res.data.files.length > 0) {
         addToast('warning', 'Upload completed, but no files were successfully uploaded.');
       }
       if (failures.length > 0) {
