@@ -162,6 +162,14 @@ describe('AuthService', () => {
         auth.changePassword(sessionId, 'admin123', 'weak'),
       ).rejects.toMatchObject({ code: 'PASSWORD_POLICY' });
     });
+
+    it('should reject admin123 as a new password because it fails policy', async () => {
+      await auth.seedDefaultAdmin('fs_adm1', 'admin123');
+      const { sessionId } = await auth.login('fs_adm1', 'admin123');
+      await expect(
+        auth.changePassword(sessionId, 'admin123', 'admin123'),
+      ).rejects.toMatchObject({ code: 'PASSWORD_POLICY' });
+    });
   });
 
   // ── Single-user mode ──────────────────
@@ -179,22 +187,28 @@ describe('AuthService', () => {
       await auth.seedDefaultAdmin('fs_adm1', 'admin123');
       const { sessionId } = await auth.login('fs_adm1', 'admin123');
       const currentUser = auth.getCurrentUser(sessionId);
-      expect(() =>
-        auth.updateUser(sessionId, currentUser!.id, { is_active: false }),
-      ).toThrowError(AuthError);
-      expect(() =>
-        auth.updateUser(sessionId, currentUser!.id, { is_active: false }),
-      ).toThrowError(/one static user account only/i);
+      try {
+        auth.updateUser(sessionId, currentUser!.id, { is_active: false });
+        expect.fail('Expected SINGLE_USER_ONLY error');
+      } catch (error) {
+        expect(error).toBeInstanceOf(AuthError);
+        expect((error as AuthError).code).toBe('SINGLE_USER_ONLY');
+        expect((error as AuthError).message).toMatch(/one static user account only/i);
+      }
     });
 
     it('should reject deleting users', async () => {
       await auth.seedDefaultAdmin('fs_adm1', 'admin123');
       const { sessionId } = await auth.login('fs_adm1', 'admin123');
       const currentUser = auth.getCurrentUser(sessionId);
-      expect(() => auth.deleteUser(sessionId, currentUser!.id)).toThrowError(AuthError);
-      expect(() => auth.deleteUser(sessionId, currentUser!.id)).toThrowError(
-        /one static user account only/i,
-      );
+      try {
+        auth.deleteUser(sessionId, currentUser!.id);
+        expect.fail('Expected SINGLE_USER_ONLY error');
+      } catch (error) {
+        expect(error).toBeInstanceOf(AuthError);
+        expect((error as AuthError).code).toBe('SINGLE_USER_ONLY');
+        expect((error as AuthError).message).toMatch(/one static user account only/i);
+      }
     });
 
     it('should reject resetting password via admin endpoint', async () => {
@@ -210,10 +224,14 @@ describe('AuthService', () => {
       await auth.seedDefaultAdmin('fs_adm1', 'admin123');
       const { sessionId } = await auth.login('fs_adm1', 'admin123');
       const currentUser = auth.getCurrentUser(sessionId);
-      expect(() => auth.unlockUser(sessionId, currentUser!.id)).toThrowError(AuthError);
-      expect(() => auth.unlockUser(sessionId, currentUser!.id)).toThrowError(
-        /one static user account only/i,
-      );
+      try {
+        auth.unlockUser(sessionId, currentUser!.id);
+        expect.fail('Expected SINGLE_USER_ONLY error');
+      } catch (error) {
+        expect(error).toBeInstanceOf(AuthError);
+        expect((error as AuthError).code).toBe('SINGLE_USER_ONLY');
+        expect((error as AuthError).message).toMatch(/one static user account only/i);
+      }
     });
   });
 
