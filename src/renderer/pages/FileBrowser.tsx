@@ -298,7 +298,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             : `Standard upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`,
         );
       } else {
-        addToast('info', 'Upload finished with no successful files.');
+        addToast('warning', 'Upload completed, but no files were successfully uploaded.');
       }
       if (failures.length > 0) {
         addToast(
@@ -1071,7 +1071,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             )}
           </div>
           <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
-            The temporary decrypted file is scheduled for deletion in about {Math.round(viewer.cleanupAfterMs / 1000)} seconds.
+            Temporary preview data (not your original file) is auto-deleted in about {Math.round(viewer.cleanupAfterMs / 1000)} seconds.
           </div>
         </OverlayModal>
       )}
