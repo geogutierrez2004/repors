@@ -251,7 +251,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     let cancelled = false;
     const render = async () => {
       try {
-        const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+        const { getDocument } = await import('pdfjs-dist/build/pdf.mjs');
         const bytes = decodeBase64ToBytes(viewer.contentBase64);
         const doc = await getDocument({ data: bytes, disableWorker: true }).promise;
         const page1 = await doc.getPage(1);
@@ -1071,7 +1071,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             )}
           </div>
           <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
-            Temporary preview data (not your original file) is auto-deleted in about {Math.round(viewer.cleanupAfterMs / 1000)} seconds.
+            A temporary decrypted copy used for preview is auto-deleted in about {Math.round(viewer.cleanupAfterMs / 1000)} seconds.
           </div>
         </OverlayModal>
       )}

@@ -679,7 +679,7 @@ export class DashboardService {
   }
 
   cleanupSecureTempViews(): void {
-    for (const [viewId, timer] of this.secureViewCleanupTimers.entries()) {
+    for (const [viewId, timer] of [...this.secureViewCleanupTimers.entries()]) {
       clearTimeout(timer);
       const entry = this.secureViewTempById.get(viewId);
       this.removeSecureTempView(viewId, entry?.tempDir);
