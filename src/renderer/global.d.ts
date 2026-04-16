@@ -13,6 +13,8 @@ import type {
   DashboardStats,
   SessionInfo,
   PaginatedResult,
+  FileUploadResult,
+  SourceHandlingMode,
 } from '../shared/types';
 
 declare global {
@@ -59,7 +61,9 @@ declare global {
           sessionId: string,
           shelfId: string,
           encrypt: boolean,
-        ): Promise<IpcResponse<FileRecord>>;
+          sourceHandlingMode?: SourceHandlingMode,
+          confirmPermanentDelete?: boolean,
+        ): Promise<IpcResponse<FileUploadResult>>;
         download(sessionId: string, fileId: string): Promise<IpcResponse<null>>;
         delete(sessionId: string, fileId: string): Promise<IpcResponse<null>>;
         move(

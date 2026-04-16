@@ -83,6 +83,8 @@ export const FileUploadSchema = z.object({
   sessionId: z.string().uuid(),
   shelfId: z.string().uuid(),
   encrypt: z.boolean().default(false),
+  sourceHandlingMode: z.enum(['keep_original', 'move_to_system', 'ask_each_time']).default('keep_original'),
+  confirmPermanentDelete: z.boolean().default(false),
 });
 
 export const FileDownloadSchema = z.object({
@@ -136,4 +138,3 @@ export const SessionTerminateSchema = z.object({
   sessionId: z.string().uuid(),
   targetSessionId: z.string().uuid(),
 });
-

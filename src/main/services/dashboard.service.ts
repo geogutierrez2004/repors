@@ -13,7 +13,8 @@ import BetterSqlite3 from 'better-sqlite3';
 import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
-import { dialog, BrowserWindow, app } from 'electron';
+import { pipeline } from 'node:stream/promises';
+import { dialog, BrowserWindow, app, shell } from 'electron';
 import { validateSession, listSessions } from './session.service';
 import { destroySession } from './session.service';
 import { requirePermission, Permission } from './rbac.service';
@@ -28,6 +29,9 @@ import type {
   SessionInfo,
   PaginatedResult,
   UserRecord,
+  FileUploadResult,
+  SourceHandlingMode,
+  FileUploadItemResult,
 } from '../../shared/types';
 import { normalizeExtension, guessExtensionFromMime } from '../utils/file-extension';
 
@@ -79,6 +83,27 @@ function computeSha256(filePath: string): string {
   hash.update(data);
   return hash.digest('hex');
 }
+
+async function computeSha256Stream(filePath: string): Promise<string> {
+  const hash = crypto.createHash('sha256');
+  await new Promise<void>((resolve, reject) => {
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve());
+    stream.on('error', reject);
+  });
+  return hash.digest('hex');
+}
+
+async function copyStream(sourcePath: string, destinationPath: string): Promise<void> {
+  await pipeline(fs.createReadStream(sourcePath), fs.createWriteStream(destinationPath));
+}
+
+const PBKDF2_ITERATIONS = 600_000;
+const PBKDF2_KEY_LEN = 32;
+const PBKDF2_DIGEST = 'sha512';
+const GCM_IV_BYTES = 12;
+const GCM_SALT_BYTES = 16;
 
 function countFilesRecursive(dirPath: string): number {
   if (!fs.existsSync(dirPath)) return 0;

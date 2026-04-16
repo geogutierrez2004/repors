@@ -20,6 +20,8 @@ import type {
   DashboardStats,
   SessionInfo,
   PaginatedResult,
+  FileUploadResult,
+  SourceHandlingMode,
 } from '../shared/types';
 
 /**
@@ -87,8 +89,20 @@ const api = {
         pageSize: opts.pageSize ?? 25,
       }),
 
-    upload: (sessionId: string, shelfId: string, encrypt: boolean) =>
-      safeInvoke<FileRecord>(IPC_CHANNELS.FILES_UPLOAD, { sessionId, shelfId, encrypt }),
+    upload: (
+      sessionId: string,
+      shelfId: string,
+      encrypt: boolean,
+      sourceHandlingMode: SourceHandlingMode = 'keep_original',
+      confirmPermanentDelete = false,
+    ) =>
+      safeInvoke<FileUploadResult>(IPC_CHANNELS.FILES_UPLOAD, {
+        sessionId,
+        shelfId,
+        encrypt,
+        sourceHandlingMode,
+        confirmPermanentDelete,
+      }),
 
     download: (sessionId: string, fileId: string) =>
       safeInvoke(IPC_CHANNELS.FILES_DOWNLOAD, { sessionId, fileId }),
