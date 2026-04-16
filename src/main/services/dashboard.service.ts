@@ -92,6 +92,29 @@ function countFilesRecursive(dirPath: string): number {
   return count;
 }
 
+function replaceDirectory(targetDir: string, sourceDir: string): void {
+  const parentDir = path.dirname(targetDir);
+  const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  const stagingDir = path.join(parentDir, `.sccfs-stage-${nonce}`);
+  const previousDir = path.join(parentDir, `.sccfs-prev-${nonce}`);
+
+  fs.cpSync(sourceDir, stagingDir, { recursive: true });
+
+  const hadTarget = fs.existsSync(targetDir);
+  if (hadTarget) fs.renameSync(targetDir, previousDir);
+
+  try {
+    fs.renameSync(stagingDir, targetDir);
+    if (hadTarget) fs.rmSync(previousDir, { recursive: true, force: true });
+  } catch (e) {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+    if (hadTarget && fs.existsSync(previousDir) && !fs.existsSync(targetDir)) {
+      fs.renameSync(previousDir, targetDir);
+    }
+    throw e;
+  }
+}
+
 // ────────────────────────────────────────
 // Dashboard service
 // ────────────────────────────────────────
@@ -621,7 +644,7 @@ export class DashboardService {
     const session = requireAuth(sessionId);
     requirePermission(session.role, Permission.STORAGE_BACKUP);
 
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const timestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
     const defaultName = `sccfs-backup-${timestamp}`;
 
     const { filePath, canceled } = await dialog.showSaveDialog(win, {
@@ -638,33 +661,47 @@ export class DashboardService {
     const backupFilesDir = path.join(backupDir, 'files');
     const backupMetaPath = path.join(backupDir, 'meta.json');
 
-    fs.mkdirSync(backupDir, { recursive: true });
+    const backupDirExisted = fs.existsSync(backupDir);
+    if (backupDirExisted && fs.readdirSync(backupDir).length > 0) {
+      throw new AuthError(
+        'BACKUP_FAILED',
+        'Target backup folder already exists and is not empty. Please choose a new folder.',
+      );
+    }
 
-    // WAL checkpoint before backup
-    this.db.pragma('wal_checkpoint(TRUNCATE)');
-    await this.db.backup(backupDbPath);
+    try {
+      fs.mkdirSync(backupDir, { recursive: true });
 
-    fs.rmSync(backupFilesDir, { recursive: true, force: true });
-    fs.mkdirSync(backupFilesDir, { recursive: true });
-    fs.cpSync(getFilesDir(), backupFilesDir, { recursive: true });
+      // WAL checkpoint before backup
+      this.db.pragma('wal_checkpoint(TRUNCATE)');
+      await this.db.backup(backupDbPath);
 
-    const totals = this.db
-      .prepare('SELECT COUNT(*) as file_count, COALESCE(SUM(size_bytes), 0) as total_bytes FROM files')
-      .get() as { file_count: number; total_bytes: number };
+      fs.mkdirSync(backupFilesDir, { recursive: true });
+      fs.cpSync(getFilesDir(), backupFilesDir, { recursive: true });
 
-    const meta = {
-      version: 1,
-      createdAt: new Date().toISOString(),
-      counts: {
-        dbFiles: totals.file_count,
-        blobFiles: countFilesRecursive(backupFilesDir),
-        totalBytes: totals.total_bytes,
-      },
-      checksum: {
-        sccfsDbSha256: computeSha256(backupDbPath),
-      },
-    };
-    fs.writeFileSync(backupMetaPath, JSON.stringify(meta, null, 2), 'utf-8');
+      const totals = this.db
+        .prepare('SELECT COUNT(*) as file_count, COALESCE(SUM(size_bytes), 0) as total_bytes FROM files')
+        .get() as { file_count: number; total_bytes: number };
+
+      const meta = {
+        version: 1,
+        createdAt: new Date().toISOString(),
+        counts: {
+          dbFiles: totals.file_count,
+          blobFiles: countFilesRecursive(backupFilesDir),
+          totalBytes: totals.total_bytes,
+        },
+        checksum: {
+          sccfsDbSha256: computeSha256(backupDbPath),
+        },
+      };
+      fs.writeFileSync(backupMetaPath, JSON.stringify(meta, null, 2), 'utf-8');
+    } catch (e) {
+      if (!backupDirExisted && fs.existsSync(backupDir)) {
+        fs.rmSync(backupDir, { recursive: true, force: true });
+      }
+      throw e;
+    }
 
     this.logActivity(session.userId, 'STORAGE_BACKUP', `Backup created at ${path.basename(backupDir)}`);
     return { path: backupDir };
@@ -686,10 +723,16 @@ export class DashboardService {
     const backupFilesDir = path.join(backupDir, 'files');
 
     if (!fs.existsSync(backupDbPath) || !fs.statSync(backupDbPath).isFile()) {
-      throw new AuthError('INVALID_BACKUP', 'Backup folder is missing sccfs.db');
+      throw new AuthError(
+        'INVALID_BACKUP',
+        'Selected folder is missing required sccfs.db file. Please select a valid backup folder.',
+      );
     }
     if (!fs.existsSync(backupFilesDir) || !fs.statSync(backupFilesDir).isDirectory()) {
-      throw new AuthError('INVALID_BACKUP', 'Backup folder is missing files directory');
+      throw new AuthError(
+        'INVALID_BACKUP',
+        'Selected folder is missing required files directory. Please select a valid backup folder.',
+      );
     }
 
     // Validate backup by opening it read-only
@@ -698,7 +741,10 @@ export class DashboardService {
       testDb = new BetterSqlite3(backupDbPath, { readonly: true });
       testDb.prepare('SELECT 1 FROM users LIMIT 1').get();
     } catch {
-      throw new AuthError('INVALID_BACKUP', 'Selected folder is not a valid SCCFS backup');
+      throw new AuthError(
+        'INVALID_BACKUP',
+        'The sccfs.db file in the selected folder is corrupted or invalid.',
+      );
     } finally {
       testDb?.close();
     }
@@ -717,15 +763,11 @@ export class DashboardService {
 
     try {
       fs.copyFileSync(backupDbPath, currentPath);
-      fs.rmSync(currentFilesDir, { recursive: true, force: true });
-      fs.mkdirSync(currentFilesDir, { recursive: true });
-      fs.cpSync(backupFilesDir, currentFilesDir, { recursive: true });
-    } catch (copyErr) {
+      replaceDirectory(currentFilesDir, backupFilesDir);
+    } catch {
       // Restore from safety backup on failure
       fs.copyFileSync(safetyBackupDb, currentPath);
-      fs.rmSync(currentFilesDir, { recursive: true, force: true });
-      fs.mkdirSync(currentFilesDir, { recursive: true });
-      fs.cpSync(safetyBackupFiles, currentFilesDir, { recursive: true });
+      replaceDirectory(currentFilesDir, safetyBackupFiles);
       throw new AuthError('RESTORE_FAILED', 'Failed to overwrite database during restore');
     } finally {
       // Always try to clean up the safety backup
