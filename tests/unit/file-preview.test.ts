@@ -135,8 +135,8 @@ describe('DashboardService.getFilePreview', () => {
   });
 
   it('requires decryption password for encrypted preview', async () => {
-    const uploadPath = path.join(dataDir, 'enc.bin');
-    fs.writeFileSync(uploadPath, crypto.randomBytes(128));
+    const uploadPath = path.join(dataDir, 'enc.txt');
+    fs.writeFileSync(uploadPath, 'secret preview payload');
     showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: [uploadPath] });
 
     const uploaded = await dashboard.uploadFile(
