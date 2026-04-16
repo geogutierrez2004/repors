@@ -22,6 +22,7 @@ import type {
   PaginatedResult,
   FileUploadResult,
   SecureTempViewResult,
+  SecureTempViewCleanupResult,
   SourceHandlingMode,
 } from '../shared/types';
 
@@ -94,6 +95,7 @@ const api = {
       sessionId: string,
       shelfId: string,
       encrypt: boolean,
+      encryptionPassword?: string,
       sourceHandlingMode: SourceHandlingMode = 'keep_original',
       confirmPermanentDelete = false,
     ) =>
@@ -101,15 +103,19 @@ const api = {
         sessionId,
         shelfId,
         encrypt,
+        encryptionPassword,
         sourceHandlingMode,
         confirmPermanentDelete,
       }),
 
-    download: (sessionId: string, fileId: string) =>
-      safeInvoke(IPC_CHANNELS.FILES_DOWNLOAD, { sessionId, fileId }),
+    download: (sessionId: string, fileId: string, decryptionPassword?: string) =>
+      safeInvoke(IPC_CHANNELS.FILES_DOWNLOAD, { sessionId, fileId, decryptionPassword }),
 
-    viewEncrypted: (sessionId: string, fileId: string) =>
-      safeInvoke<SecureTempViewResult>(IPC_CHANNELS.FILES_VIEW_ENCRYPTED, { sessionId, fileId }),
+    viewEncrypted: (sessionId: string, fileId: string, decryptionPassword: string) =>
+      safeInvoke<SecureTempViewResult>(IPC_CHANNELS.FILES_VIEW_ENCRYPTED, { sessionId, fileId, decryptionPassword }),
+
+    cleanupEncryptedView: (sessionId: string, viewId: string) =>
+      safeInvoke<SecureTempViewCleanupResult>(IPC_CHANNELS.FILES_VIEW_ENCRYPTED_CLEANUP, { sessionId, viewId }),
 
     delete: (sessionId: string, fileId: string) =>
       safeInvoke(IPC_CHANNELS.FILES_DELETE, { sessionId, fileId }),

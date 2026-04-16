@@ -83,18 +83,34 @@ export const FileUploadSchema = z.object({
   sessionId: z.string().uuid(),
   shelfId: z.string().uuid(),
   encrypt: z.boolean().default(false),
+  encryptionPassword: z.string().min(1).max(1024).optional(),
   sourceHandlingMode: z.enum(['keep_original', 'move_to_system', 'ask_each_time']).default('keep_original'),
   confirmPermanentDelete: z.boolean().default(false),
+}).superRefine((value, ctx) => {
+  if (value.encrypt && !value.encryptionPassword?.trim()) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['encryptionPassword'],
+      message: 'Encryption password is required when encrypting upload',
+    });
+  }
 });
 
 export const FileDownloadSchema = z.object({
   sessionId: z.string().uuid(),
   fileId: z.string().uuid(),
+  decryptionPassword: z.string().min(1).max(1024).optional(),
 });
 
 export const FileViewEncryptedSchema = z.object({
   sessionId: z.string().uuid(),
   fileId: z.string().uuid(),
+  decryptionPassword: z.string().min(1).max(1024),
+});
+
+export const FileViewEncryptedCleanupSchema = z.object({
+  sessionId: z.string().uuid(),
+  viewId: z.string().uuid(),
 });
 
 export const FileDeleteSchema = z.object({

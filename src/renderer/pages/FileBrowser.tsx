@@ -5,7 +5,8 @@
  * download, move to shelf, and delete. Shelf filter shown in a left column. Selection
  * supports bulk operations.
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { getDocument } from 'pdfjs-dist';
 import type { FileRecord, ShelfRecord, PaginatedResult, SourceHandlingMode } from '../../shared/types';
 import type { AddToast } from '../App';
 import type { SafeUser } from '../../shared/types';
@@ -20,8 +21,50 @@ interface Props {
 const PAGE_SIZE = 25;
 const ENCRYPT_BEFORE_UPLOAD_PROMPT = 'Encrypt this file before uploading?';
 
-export function requestUploadEncryptionDecision(confirmFn: (message: string) => boolean): boolean {
-  return confirmFn(ENCRYPT_BEFORE_UPLOAD_PROMPT);
+export type UploadEncryptionDecision = 'yes' | 'no' | 'cancel';
+
+export function requestUploadEncryptionDecision(
+  promptFn: (message: string) => UploadEncryptionDecision,
+): UploadEncryptionDecision {
+  return promptFn(ENCRYPT_BEFORE_UPLOAD_PROMPT);
+}
+
+export function validateEncryptionPasswords(password: string, confirmPassword: string): string | null {
+  if (!password.trim()) return 'Encryption password is required.';
+  if (password !== confirmPassword) return 'Encryption passwords do not match.';
+  return null;
+}
+
+type PreviewKind = 'pdf' | 'image' | 'text' | 'audio' | 'video' | 'fallback';
+
+function getPreviewKind(mimeType: string | null, fileName: string): PreviewKind {
+  const mime = (mimeType ?? '').toLowerCase();
+  const lowerName = fileName.toLowerCase();
+  if (mime === 'application/pdf' || lowerName.endsWith('.pdf')) return 'pdf';
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('audio/')) return 'audio';
+  if (mime.startsWith('video/')) return 'video';
+  if (
+    mime.startsWith('text/')
+    || lowerName.endsWith('.txt')
+    || lowerName.endsWith('.md')
+    || lowerName.endsWith('.csv')
+    || lowerName.endsWith('.json')
+    || lowerName.endsWith('.xml')
+    || lowerName.endsWith('.log')
+  ) {
+    return 'text';
+  }
+  return 'fallback';
+}
+
+function decodeBase64ToBytes(contentBase64: string): Uint8Array {
+  const binary = atob(contentBase64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
 }
 
 function fmtBytes(b: number): string {
@@ -98,12 +141,31 @@ function MoveModal({
   );
 }
 
+function OverlayModal({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,.45)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1100,
+      }}
+    >
+      <div style={{ ...cardStyle(), width: 460, maxWidth: '92vw' }}>{children}</div>
+    </div>
+  );
+}
+
 // ────────────────────────────────────────
 // Main component
 // ────────────────────────────────────────
 
 export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Element {
   const isAdmin = user.role === 'admin';
+  const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [shelves, setShelves] = useState<ShelfRecord[]>([]);
   const [files, setFiles] = useState<PaginatedResult<FileRecord>>({
@@ -123,6 +185,22 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const [moveModal, setMoveModal] = useState<string[] | null>(null);
   const [newShelfName, setNewShelfName] = useState('');
   const [addingShelf, setAddingShelf] = useState(false);
+  const [showUploadEncryptModal, setShowUploadEncryptModal] = useState(false);
+  const [showUploadPasswordModal, setShowUploadPasswordModal] = useState(false);
+  const [pendingUploadMode, setPendingUploadMode] = useState<SourceHandlingMode>('keep_original');
+  const [uploadPassword, setUploadPassword] = useState('');
+  const [uploadPasswordConfirm, setUploadPasswordConfirm] = useState('');
+  const [uploadPasswordError, setUploadPasswordError] = useState<string | null>(null);
+  const [decryptPrompt, setDecryptPrompt] = useState<{ fileId: string; name: string; mode: 'download' | 'view' } | null>(null);
+  const [decryptionPassword, setDecryptionPassword] = useState('');
+  const [decryptionError, setDecryptionError] = useState<string | null>(null);
+  const [viewer, setViewer] = useState<{
+    viewId: string;
+    fileName: string;
+    mimeType: string | null;
+    contentBase64: string;
+    cleanupAfterMs: number;
+  } | null>(null);
 
   const loadShelves = useCallback(async () => {
     const res = await window.sccfs.shelves.list(sessionId);
@@ -155,20 +233,58 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     setSelected(new Set());
   }, [page, selectedShelf, search]);
 
-  const handleUpload = async () => {
-    if (!selectedShelf) {
-      addToast('warning', 'Select a shelf before uploading');
-      return;
-    }
-    const encrypt = requestUploadEncryptionDecision((message) => confirm(message));
-    setUploadLoading(true);
-    let effectiveMode = sourceHandlingMode;
-    if (sourceHandlingMode === 'ask_each_time') {
-      const shouldMove = confirm('Move original files to system storage after successful upload?');
-      effectiveMode = shouldMove ? 'move_to_system' : 'keep_original';
-    }
+  const previewKind = useMemo(
+    () => (viewer ? getPreviewKind(viewer.mimeType, viewer.fileName) : 'fallback'),
+    [viewer],
+  );
+  const viewerDataUrl = useMemo(() => {
+    if (!viewer) return '';
+    const mime = viewer.mimeType ?? 'application/octet-stream';
+    return `data:${mime};base64,${viewer.contentBase64}`;
+  }, [viewer]);
+  const viewerTextContent = useMemo(() => {
+    if (!viewer || previewKind !== 'text') return '';
+    return new TextDecoder().decode(decodeBase64ToBytes(viewer.contentBase64));
+  }, [viewer, previewKind]);
 
-    const res = await window.sccfs.files.upload(sessionId, selectedShelf, encrypt, effectiveMode, false);
+  useEffect(() => {
+    if (!viewer || previewKind !== 'pdf' || !pdfCanvasRef.current) return;
+    let cancelled = false;
+    const render = async () => {
+      try {
+        const bytes = decodeBase64ToBytes(viewer.contentBase64);
+        const doc = await getDocument({ data: bytes, disableWorker: true }).promise;
+        const page1 = await doc.getPage(1);
+        const viewport = page1.getViewport({ scale: 1.25 });
+        const canvas = pdfCanvasRef.current;
+        if (!canvas || cancelled) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        await page1.render({ canvasContext: ctx, viewport }).promise;
+      } catch {
+        addToast('error', 'Unable to render PDF preview.');
+      }
+    };
+    void render();
+    return () => {
+      cancelled = true;
+    };
+  }, [viewer, previewKind, addToast]);
+
+  const performUpload = async (encrypt: boolean, encryptionPassword?: string) => {
+    if (!selectedShelf) return;
+    setUploadLoading(true);
+    const effectiveMode = pendingUploadMode;
+    const res = await window.sccfs.files.upload(
+      sessionId,
+      selectedShelf,
+      encrypt,
+      encryptionPassword,
+      effectiveMode,
+      false,
+    );
     setUploadLoading(false);
     if (res.ok) {
       const successes = res.data.files.filter((f) => f.success);
@@ -181,6 +297,8 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             ? `Encrypted upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`
             : `Standard upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`,
         );
+      } else {
+        addToast('info', 'Upload finished with no successful files.');
       }
       if (failures.length > 0) {
         addToast(
@@ -190,15 +308,37 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       }
       loadFiles();
       loadShelves();
-    } else if (res.error?.code !== 'CANCELLED') {
+      return;
+    }
+    if (res.error?.code !== 'CANCELLED') {
       addToast('error', res.error?.message ?? 'Upload failed');
     }
   };
 
+  const handleUpload = async () => {
+    if (!selectedShelf) {
+      addToast('warning', 'Select a shelf before uploading');
+      return;
+    }
+    let effectiveMode = sourceHandlingMode;
+    if (sourceHandlingMode === 'ask_each_time') {
+      const shouldMove = confirm('Move original files to system storage after successful upload?');
+      effectiveMode = shouldMove ? 'move_to_system' : 'keep_original';
+    }
+    setPendingUploadMode(effectiveMode);
+    setShowUploadEncryptModal(true);
+  };
+
   const handleDownload = async (fileId: string, name: string, encrypted: boolean) => {
+    if (encrypted) {
+      setDecryptPrompt({ fileId, name, mode: 'download' });
+      setDecryptionPassword('');
+      setDecryptionError(null);
+      return;
+    }
     const res = await window.sccfs.files.download(sessionId, fileId);
     if (res.ok) {
-      addToast('success', encrypted ? `Decrypted and downloaded "${name}"` : `Downloaded "${name}"`);
+      addToast('success', `Downloaded "${name}"`);
     } else if (res.error?.code !== 'CANCELLED') {
       if (res.error?.code === 'DECRYPTION_FAILED_AUTH_TAG') {
         addToast('error', 'File failed integrity check or is corrupted.');
@@ -209,18 +349,90 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   };
 
   const handleViewEncrypted = async (fileId: string, name: string) => {
-    const res = await window.sccfs.files.viewEncrypted(sessionId, fileId);
+    setDecryptPrompt({ fileId, name, mode: 'view' });
+    setDecryptionPassword('');
+    setDecryptionError(null);
+  };
+
+  const handleUploadDecision = async (decision: UploadEncryptionDecision) => {
+    setShowUploadEncryptModal(false);
+    if (decision === 'cancel') {
+      addToast('info', 'Upload cancelled before processing.');
+      return;
+    }
+    if (decision === 'no') {
+      await performUpload(false);
+      return;
+    }
+    setUploadPassword('');
+    setUploadPasswordConfirm('');
+    setUploadPasswordError(null);
+    setShowUploadPasswordModal(true);
+  };
+
+  const handleSubmitUploadPassword = async () => {
+    const validation = validateEncryptionPasswords(uploadPassword, uploadPasswordConfirm);
+    if (validation) {
+      setUploadPasswordError(validation);
+      return;
+    }
+    setShowUploadPasswordModal(false);
+    await performUpload(true, uploadPassword);
+    setUploadPassword('');
+    setUploadPasswordConfirm('');
+    setUploadPasswordError(null);
+  };
+
+  const handleSubmitDecryptionPassword = async () => {
+    if (!decryptPrompt) return;
+    const password = decryptionPassword.trim();
+    if (!password) {
+      setDecryptionError('Password is required.');
+      return;
+    }
+    if (decryptPrompt.mode === 'download') {
+      const res = await window.sccfs.files.download(sessionId, decryptPrompt.fileId, password);
+      if (res.ok) {
+        addToast('success', `Decrypted and downloaded "${decryptPrompt.name}"`);
+        setDecryptPrompt(null);
+        setDecryptionPassword('');
+        setDecryptionError(null);
+        return;
+      }
+      if (res.error?.code === 'DECRYPTION_FAILED_AUTH_TAG') {
+        addToast('error', 'File failed integrity check or is corrupted.');
+      } else if (res.error?.code !== 'CANCELLED') {
+        addToast('error', res.error?.message ?? 'Download failed');
+      }
+      return;
+    }
+
+    const res = await window.sccfs.files.viewEncrypted(sessionId, decryptPrompt.fileId, password);
     if (res.ok) {
-      addToast('success', `Secure temp view opened for "${name}"`);
+      setViewer(res.data);
+      setDecryptPrompt(null);
+      setDecryptionPassword('');
+      setDecryptionError(null);
+      addToast('success', `In-app secure preview opened for "${decryptPrompt.name}".`);
       return;
     }
     if (res.error?.code === 'DECRYPTION_FAILED_AUTH_TAG') {
       addToast('error', 'File failed integrity check or is corrupted.');
-      return;
-    }
-    if (res.error?.code !== 'CANCELLED') {
+    } else if (res.error?.code !== 'CANCELLED') {
       addToast('error', res.error?.message ?? 'Unable to securely view this file');
     }
+  };
+
+  const closeViewer = async () => {
+    if (!viewer) return;
+    const viewId = viewer.viewId;
+    setViewer(null);
+    const cleanupRes = await window.sccfs.files.cleanupEncryptedView(sessionId, viewId);
+    if (cleanupRes.ok && cleanupRes.data.deleted) {
+      addToast('info', 'Temporary decrypted preview file deleted.');
+      return;
+    }
+    addToast('info', 'Temporary preview file will be removed automatically shortly.');
   };
 
   const handleDelete = async (ids: string[]) => {
@@ -751,6 +963,118 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
           onCancel={() => setMoveModal(null)}
         />
       )}
+      {showUploadEncryptModal && (
+        <OverlayModal>
+          <h3 style={{ marginTop: 0, marginBottom: 12 }}>Upload Confirmation</h3>
+          <p style={{ marginTop: 0, marginBottom: 18, color: 'var(--text-secondary)', fontSize: 13 }}>
+            Encrypt this file before uploading?
+          </p>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button onClick={() => void handleUploadDecision('cancel')} style={btnStyle('secondary', true)}>Cancel</button>
+            <button onClick={() => void handleUploadDecision('no')} style={btnStyle('ghost', true)}>No</button>
+            <button onClick={() => void handleUploadDecision('yes')} style={btnStyle('primary', true)}>Yes</button>
+          </div>
+        </OverlayModal>
+      )}
+      {showUploadPasswordModal && (
+        <OverlayModal>
+          <h3 style={{ marginTop: 0, marginBottom: 12 }}>Encryption Password</h3>
+          <p style={{ marginTop: 0, marginBottom: 12, color: 'var(--text-secondary)', fontSize: 13 }}>
+            Enter and confirm the password used to encrypt this upload.
+          </p>
+          <input
+            type="password"
+            autoFocus
+            value={uploadPassword}
+            onChange={(e) => { setUploadPassword(e.target.value); setUploadPasswordError(null); }}
+            placeholder="Encryption password"
+            style={modalInputStyle}
+          />
+          <input
+            type="password"
+            value={uploadPasswordConfirm}
+            onChange={(e) => { setUploadPasswordConfirm(e.target.value); setUploadPasswordError(null); }}
+            placeholder="Confirm password"
+            style={{ ...modalInputStyle, marginTop: 8 }}
+          />
+          {uploadPasswordError && (
+            <div style={{ marginTop: 8, color: 'var(--danger)', fontSize: 12 }}>{uploadPasswordError}</div>
+          )}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+            <button
+              onClick={() => { setShowUploadPasswordModal(false); addToast('info', 'Upload cancelled before processing.'); }}
+              style={btnStyle('secondary', true)}
+            >
+              Cancel
+            </button>
+            <button onClick={() => void handleSubmitUploadPassword()} style={btnStyle('primary', true)}>
+              Encrypt & Upload
+            </button>
+          </div>
+        </OverlayModal>
+      )}
+      {decryptPrompt && (
+        <OverlayModal>
+          <h3 style={{ marginTop: 0, marginBottom: 12 }}>
+            {decryptPrompt.mode === 'view' ? 'Password Required for Preview' : 'Password Required for Download'}
+          </h3>
+          <p style={{ marginTop: 0, marginBottom: 12, color: 'var(--text-secondary)', fontSize: 13 }}>
+            Enter the encryption password for "{decryptPrompt.name}".
+          </p>
+          <input
+            type="password"
+            autoFocus
+            value={decryptionPassword}
+            onChange={(e) => { setDecryptionPassword(e.target.value); setDecryptionError(null); }}
+            placeholder="Decryption password"
+            style={modalInputStyle}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void handleSubmitDecryptionPassword();
+              }
+            }}
+          />
+          {decryptionError && (
+            <div style={{ marginTop: 8, color: 'var(--danger)', fontSize: 12 }}>{decryptionError}</div>
+          )}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+            <button
+              onClick={() => { setDecryptPrompt(null); setDecryptionPassword(''); setDecryptionError(null); }}
+              style={btnStyle('secondary', true)}
+            >
+              Cancel
+            </button>
+            <button onClick={() => void handleSubmitDecryptionPassword()} style={btnStyle('primary', true)}>
+              Continue
+            </button>
+          </div>
+        </OverlayModal>
+      )}
+      {viewer && (
+        <OverlayModal>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+            <h3 style={{ margin: 0 }}>Secure In-App Viewer</h3>
+            <button onClick={() => void closeViewer()} style={btnStyle('secondary', true)}>Close</button>
+          </div>
+          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>{viewer.fileName}</div>
+          <div style={{ marginTop: 14, maxHeight: '70vh', overflow: 'auto', border: '1px solid var(--border)', borderRadius: 6, padding: 10 }}>
+            {previewKind === 'pdf' && <canvas ref={pdfCanvasRef} style={{ maxWidth: '100%', display: 'block' }} />}
+            {previewKind === 'image' && <img src={viewerDataUrl} style={{ maxWidth: '100%', maxHeight: '65vh' }} />}
+            {previewKind === 'text' && <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{viewerTextContent}</pre>}
+            {previewKind === 'audio' && <audio controls src={viewerDataUrl} style={{ width: '100%' }} />}
+            {previewKind === 'video' && <video controls src={viewerDataUrl} style={{ width: '100%', maxHeight: '65vh' }} />}
+            {previewKind === 'fallback' && (
+              <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                This file type is not supported for in-app preview. Please use Download to access the file.
+              </div>
+            )}
+          </div>
+          <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
+            The temporary decrypted file is scheduled for deletion in about {Math.round(viewer.cleanupAfterMs / 1000)} seconds.
+          </div>
+        </OverlayModal>
+      )}
     </div>
   );
 }
@@ -777,6 +1101,16 @@ function tdStyle(width?: number): React.CSSProperties {
     width: width,
   };
 }
+
+const modalInputStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '8px 10px',
+  borderRadius: 6,
+  border: '1px solid var(--border)',
+  background: 'var(--bg-surface)',
+  color: 'var(--text-primary)',
+  fontSize: 13,
+};
 
 function fileIcon(mime: string | null): string {
   if (!mime) return '📄';

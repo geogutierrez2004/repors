@@ -33,6 +33,7 @@ import type {
   SourceHandlingMode,
   FileUploadItemResult,
   SecureTempViewResult,
+  SecureTempViewCleanupResult,
 } from '../../shared/types';
 import { normalizeExtension, guessExtensionFromMime } from '../utils/file-extension';
 
@@ -130,9 +131,9 @@ function makeTempPartPath(basePath: string): string {
 // ────────────────────────────────────────
 
 export class DashboardService {
-  private encryptionMasterSecret?: Buffer;
   private secureViewCleanupTimers = new Map<string, NodeJS.Timeout>();
   private secureViewCleanupRetryCount = new Map<string, number>();
+  private secureViewTempById = new Map<string, { tempDir: string; tempFilePath: string }>();
 
   constructor(
     private db: Database.Database,
@@ -328,6 +329,7 @@ export class DashboardService {
     sessionId: string,
     shelfId: string,
     encrypt: boolean,
+    encryptionPassword: string | undefined,
     sourceHandlingMode: SourceHandlingMode,
     confirmPermanentDelete: boolean,
     win: BrowserWindow,
@@ -361,6 +363,11 @@ export class DashboardService {
     const filesDir = getFilesDir();
     const resultItems: FileUploadItemResult[] = [];
     const mode: SourceHandlingMode = sourceHandlingMode === 'ask_each_time' ? 'keep_original' : sourceHandlingMode;
+    const normalizedEncryptionPassword = encryptionPassword?.trim();
+
+    if (encrypt && !normalizedEncryptionPassword) {
+      throw new AuthError('ENCRYPTION_PASSWORD_REQUIRED', 'Encryption password is required for encrypted upload.');
+    }
 
     for (const filePath of filePaths) {
       const sourceName = path.basename(filePath);
@@ -440,7 +447,7 @@ export class DashboardService {
           const iterations = PBKDF2_ITERATIONS;
           const salt = crypto.randomBytes(GCM_SALT_BYTES);
           const iv = crypto.randomBytes(GCM_IV_BYTES);
-          const key = this.deriveFileKey(salt, iterations);
+          const key = this.deriveFileKey(normalizedEncryptionPassword as string, salt, iterations);
           const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
           const finalPath = path.join(filesDir, storedName);
           const tempPath = makeTempPartPath(finalPath);
@@ -527,7 +534,13 @@ export class DashboardService {
           payloadWrittenToDisk,
         };
 
-        await this.assertStoredUploadIntegrity(fileId, path.join(filesDir, storedName), sha256, encrypt);
+        await this.assertStoredUploadIntegrity(
+          fileId,
+          path.join(filesDir, storedName),
+          sha256,
+          encrypt,
+          normalizedEncryptionPassword,
+        );
 
         if (mode === 'move_to_system') {
           item.removed_original = await this.removeOriginalFileSafely(filePath, confirmPermanentDelete);
@@ -562,7 +575,12 @@ export class DashboardService {
     return { files: resultItems };
   }
 
-  async downloadFile(sessionId: string, fileId: string, win: BrowserWindow): Promise<void> {
+  async downloadFile(
+    sessionId: string,
+    fileId: string,
+    decryptionPassword: string | undefined,
+    win: BrowserWindow,
+  ): Promise<void> {
     const session = requireAuth(sessionId);
     requirePermission(session.role, Permission.FILE_DOWNLOAD);
 
@@ -586,7 +604,11 @@ export class DashboardService {
     if (!fileRow.is_encrypted) {
       await copyStream(srcPath, filePath);
     } else {
-      await this.decryptEncryptedPayloadToFile(fileId, srcPath, filePath);
+      const normalizedPassword = decryptionPassword?.trim();
+      if (!normalizedPassword) {
+        throw new AuthError('DECRYPTION_PASSWORD_REQUIRED', 'Password is required to decrypt this file.');
+      }
+      await this.decryptEncryptedPayloadToFile(fileId, srcPath, filePath, normalizedPassword);
     }
 
     this.db
@@ -596,7 +618,11 @@ export class DashboardService {
     this.logActivity(session.userId, 'FILE_DOWNLOAD', `Downloaded ${fileRow.original_name}`);
   }
 
-  async viewEncryptedFile(sessionId: string, fileId: string): Promise<SecureTempViewResult> {
+  async viewEncryptedFile(
+    sessionId: string,
+    fileId: string,
+    decryptionPassword: string,
+  ): Promise<SecureTempViewResult> {
     const session = requireAuth(sessionId);
     requirePermission(session.role, Permission.FILE_DOWNLOAD);
 
@@ -607,6 +633,10 @@ export class DashboardService {
     if (!fileRow.is_encrypted) {
       throw new AuthError('FILE_NOT_ENCRYPTED', 'Only encrypted files can be opened with secure view');
     }
+    const normalizedPassword = decryptionPassword?.trim();
+    if (!normalizedPassword) {
+      throw new AuthError('DECRYPTION_PASSWORD_REQUIRED', 'Password is required to decrypt this file.');
+    }
 
     const srcPath = path.join(getFilesDir(), fileRow.stored_name);
     if (!fs.existsSync(srcPath)) {
@@ -614,33 +644,49 @@ export class DashboardService {
     }
 
     const { tempDir, tempFilePath } = await this.createSecureTempViewTarget(fileRow);
+    const viewId = uuidv4();
     try {
-      await this.decryptEncryptedPayloadToFile(fileId, srcPath, tempFilePath);
-
-      const openResult = await shell.openPath(tempFilePath);
-      if (openResult) {
-        throw new AuthError('VIEW_OPEN_FAILED', openResult);
-      }
+      await this.decryptEncryptedPayloadToFile(fileId, srcPath, tempFilePath, normalizedPassword);
     } catch (error) {
-      this.removeSecureTempViewDir(tempDir);
+      this.removeSecureTempView(viewId, tempDir);
       if (error instanceof AuthError) {
         throw error;
       }
       throw new AuthError('SECURE_VIEW_FAILED', 'Could not open secure temp view for this file');
     }
 
-    this.scheduleSecureTempViewCleanup(tempDir);
+    const contentBase64 = fs.readFileSync(tempFilePath).toString('base64');
+    this.secureViewTempById.set(viewId, { tempDir, tempFilePath });
+    this.scheduleSecureTempViewCleanup(viewId, tempDir);
     this.logActivity(session.userId, 'FILE_VIEW', `Viewed encrypted ${fileRow.original_name}`);
-    return { cleanupAfterMs: SECURE_TEMP_VIEW_TTL_MS };
+    return {
+      viewId,
+      fileName: this.resolveDownloadFileName(fileRow),
+      mimeType: fileRow.mime_type,
+      contentBase64,
+      cleanupAfterMs: SECURE_TEMP_VIEW_TTL_MS,
+    };
+  }
+
+  cleanupSecureTempView(sessionId: string, viewId: string): SecureTempViewCleanupResult {
+    requireAuth(sessionId);
+    const entry = this.secureViewTempById.get(viewId);
+    if (!entry) {
+      return { deleted: false };
+    }
+    this.removeSecureTempView(viewId, entry.tempDir);
+    return { deleted: true };
   }
 
   cleanupSecureTempViews(): void {
-    for (const [tempDir, timer] of this.secureViewCleanupTimers.entries()) {
+    for (const [viewId, timer] of this.secureViewCleanupTimers.entries()) {
       clearTimeout(timer);
-      this.removeSecureTempViewDir(tempDir);
+      const entry = this.secureViewTempById.get(viewId);
+      this.removeSecureTempView(viewId, entry?.tempDir);
     }
     this.secureViewCleanupTimers.clear();
     this.secureViewCleanupRetryCount.clear();
+    this.secureViewTempById.clear();
   }
 
   deleteFile(sessionId: string, fileId: string): void {
@@ -1108,29 +1154,9 @@ export class DashboardService {
       .run(uuidv4(), userId, action, detail);
   }
 
-  private getEncryptionMasterSecret(): Buffer {
-    if (this.encryptionMasterSecret) return this.encryptionMasterSecret;
-
-    const row = this.db
-      .prepare("SELECT value FROM app_config WHERE key = 'encryption_master_secret'")
-      .get() as { value: string } | undefined;
-
-    if (row?.value) {
-      this.encryptionMasterSecret = Buffer.from(row.value, 'base64');
-      return this.encryptionMasterSecret;
-    }
-
-    const secret = crypto.randomBytes(PBKDF2_KEY_LEN);
-    this.db
-      .prepare("INSERT INTO app_config (key, value) VALUES ('encryption_master_secret', ?)")
-      .run(secret.toString('base64'));
-    this.encryptionMasterSecret = secret;
-    return secret;
-  }
-
-  private deriveFileKey(salt: Buffer, iterations: number): Buffer {
+  private deriveFileKey(password: string, salt: Buffer, iterations: number): Buffer {
     return crypto.pbkdf2Sync(
-      this.getEncryptionMasterSecret(),
+      Buffer.from(password, 'utf-8'),
       salt,
       iterations,
       PBKDF2_KEY_LEN,
@@ -1138,7 +1164,12 @@ export class DashboardService {
     );
   }
 
-  private async decryptEncryptedPayloadToFile(fileId: string, srcPath: string, outputPath: string): Promise<void> {
+  private async decryptEncryptedPayloadToFile(
+    fileId: string,
+    srcPath: string,
+    outputPath: string,
+    decryptionPassword: string,
+  ): Promise<void> {
     const metadata = this.db
       .prepare('SELECT salt, iv, auth_tag, iterations FROM encryption_keys WHERE file_id = ?')
       .get(fileId) as
@@ -1154,7 +1185,7 @@ export class DashboardService {
       const salt = Buffer.from(metadata.salt, 'base64');
       const iv = Buffer.from(metadata.iv, 'base64');
       const authTag = Buffer.from(metadata.auth_tag, 'base64');
-      const key = this.deriveFileKey(salt, metadata.iterations);
+      const key = this.deriveFileKey(decryptionPassword, salt, metadata.iterations);
       const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
       decipher.setAuthTag(authTag);
 
@@ -1188,40 +1219,44 @@ export class DashboardService {
     return { tempDir, tempFilePath };
   }
 
-  private scheduleSecureTempViewCleanup(tempDir: string): void {
-    const existing = this.secureViewCleanupTimers.get(tempDir);
+  private scheduleSecureTempViewCleanup(viewId: string, tempDir: string): void {
+    const existing = this.secureViewCleanupTimers.get(viewId);
     if (existing) {
       clearTimeout(existing);
     }
     const timer = setTimeout(() => {
-      this.removeSecureTempViewDir(tempDir);
+      this.removeSecureTempView(viewId, tempDir);
     }, SECURE_TEMP_VIEW_TTL_MS);
     timer.unref();
-    this.secureViewCleanupRetryCount.set(tempDir, 0);
-    this.secureViewCleanupTimers.set(tempDir, timer);
+    this.secureViewCleanupRetryCount.set(viewId, 0);
+    this.secureViewCleanupTimers.set(viewId, timer);
   }
 
-  private removeSecureTempViewDir(tempDir: string): void {
-    const timer = this.secureViewCleanupTimers.get(tempDir);
+  private removeSecureTempView(viewId: string, fallbackTempDir?: string): void {
+    const timer = this.secureViewCleanupTimers.get(viewId);
     if (timer) {
       clearTimeout(timer);
-      this.secureViewCleanupTimers.delete(tempDir);
+      this.secureViewCleanupTimers.delete(viewId);
     }
+    const tempDir = this.secureViewTempById.get(viewId)?.tempDir ?? fallbackTempDir;
+    if (!tempDir) return;
     try {
       fs.rmSync(tempDir, { recursive: true, force: true });
-      this.secureViewCleanupRetryCount.delete(tempDir);
+      this.secureViewCleanupRetryCount.delete(viewId);
+      this.secureViewTempById.delete(viewId);
     } catch {
-      const retryCount = (this.secureViewCleanupRetryCount.get(tempDir) ?? 0) + 1;
+      const retryCount = (this.secureViewCleanupRetryCount.get(viewId) ?? 0) + 1;
       if (retryCount > MAX_SECURE_TEMP_CLEANUP_RETRIES) {
-        this.secureViewCleanupRetryCount.delete(tempDir);
+        this.secureViewCleanupRetryCount.delete(viewId);
+        this.secureViewTempById.delete(viewId);
         return;
       }
-      this.secureViewCleanupRetryCount.set(tempDir, retryCount);
+      this.secureViewCleanupRetryCount.set(viewId, retryCount);
       const retry = setTimeout(() => {
-        this.removeSecureTempViewDir(tempDir);
+        this.removeSecureTempView(viewId, tempDir);
       }, 15_000 * retryCount);
       retry.unref();
-      this.secureViewCleanupTimers.set(tempDir, retry);
+      this.secureViewCleanupTimers.set(viewId, retry);
     }
   }
 
@@ -1230,13 +1265,17 @@ export class DashboardService {
     storedPath: string,
     expectedPlaintextSha256: string,
     encrypted: boolean,
+    encryptionPassword?: string,
   ): Promise<void> {
     if (!fs.existsSync(storedPath)) {
       throw new AuthError('UPLOAD_INTEGRITY_MISSING_PAYLOAD', 'Stored payload was not found after upload');
     }
 
     if (encrypted) {
-      await this.assertEncryptedPayloadIntegrity(fileId, storedPath, expectedPlaintextSha256);
+      if (!encryptionPassword) {
+        throw new AuthError('UPLOAD_INTEGRITY_PASSWORD_REQUIRED', 'Encryption password required for integrity check');
+      }
+      await this.assertEncryptedPayloadIntegrity(fileId, storedPath, expectedPlaintextSha256, encryptionPassword);
       return;
     }
     await this.assertPlainPayloadIntegrity(storedPath, expectedPlaintextSha256);
@@ -1253,6 +1292,7 @@ export class DashboardService {
     fileId: string,
     storedPath: string,
     expectedPlaintextSha256: string,
+    encryptionPassword: string,
   ): Promise<void> {
     const metadata = this.db
       .prepare('SELECT salt, iv, auth_tag, iterations FROM encryption_keys WHERE file_id = ?')
@@ -1269,7 +1309,7 @@ export class DashboardService {
       const salt = Buffer.from(metadata.salt, 'base64');
       const iv = Buffer.from(metadata.iv, 'base64');
       const authTag = Buffer.from(metadata.auth_tag, 'base64');
-      const key = this.deriveFileKey(salt, metadata.iterations);
+      const key = this.deriveFileKey(encryptionPassword, salt, metadata.iterations);
       const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
       decipher.setAuthTag(authTag);
 

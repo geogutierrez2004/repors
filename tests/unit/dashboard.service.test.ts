@@ -11,11 +11,10 @@ import { DashboardService } from '../../src/main/services/dashboard.service';
 import { AuthService } from '../../src/main/services/auth.service';
 import { clearAllSessions } from '../../src/main/services/session.service';
 
-const { showOpenDialogMock, showSaveDialogMock, trashItemMock, openPathMock } = vi.hoisted(() => ({
+const { showOpenDialogMock, showSaveDialogMock, trashItemMock } = vi.hoisted(() => ({
   showOpenDialogMock: vi.fn(),
   showSaveDialogMock: vi.fn(),
   trashItemMock: vi.fn(),
-  openPathMock: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -25,7 +24,6 @@ vi.mock('electron', () => ({
   },
   shell: {
     trashItem: trashItemMock,
-    openPath: openPathMock,
   },
   BrowserWindow: class BrowserWindow {},
   app: {
@@ -35,6 +33,7 @@ vi.mock('electron', () => ({
 
 describe('DashboardService file extension handling', () => {
   const ENCRYPTED_TEST_REPEAT_COUNT = 128;
+  const ENCRYPTION_PASSWORD = 'StrongPassword!123';
 
   let db: Database.Database;
   let auth: AuthService;
@@ -49,9 +48,7 @@ describe('DashboardService file extension handling', () => {
     showOpenDialogMock.mockReset();
     showSaveDialogMock.mockReset();
     trashItemMock.mockReset();
-    openPathMock.mockReset();
     trashItemMock.mockResolvedValue(undefined);
-    openPathMock.mockResolvedValue('');
 
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sccfs-ext-'));
     process.env['SCCFS_DATA_DIR'] = dataDir;
@@ -89,6 +86,7 @@ describe('DashboardService file extension handling', () => {
       sessionId,
       shelfId,
       false,
+      undefined,
       'keep_original',
       false,
       {} as BrowserWindow,
@@ -126,7 +124,7 @@ describe('DashboardService file extension handling', () => {
       return { canceled: false, filePath: downloadPath };
     });
 
-    await dashboard.downloadFile(sessionId, fileId, {} as BrowserWindow);
+    await dashboard.downloadFile(sessionId, fileId, undefined, {} as BrowserWindow);
 
     expect(fs.readFileSync(downloadPath, 'utf-8')).toBe('restored file');
   });
@@ -151,7 +149,7 @@ describe('DashboardService file extension handling', () => {
       return { canceled: false, filePath: downloadPath };
     });
 
-    await dashboard.downloadFile(sessionId, fileId, {} as BrowserWindow);
+    await dashboard.downloadFile(sessionId, fileId, undefined, {} as BrowserWindow);
 
     expect(fs.readFileSync(downloadPath, 'utf-8')).toBe('fallback');
   });
@@ -176,7 +174,7 @@ describe('DashboardService file extension handling', () => {
       return { canceled: false, filePath: downloadPath };
     });
 
-    await dashboard.downloadFile(sessionId, fileId, {} as BrowserWindow);
+    await dashboard.downloadFile(sessionId, fileId, undefined, {} as BrowserWindow);
 
     expect(fs.readFileSync(downloadPath, 'utf-8')).toBe('keep extension');
   });
@@ -192,6 +190,7 @@ describe('DashboardService file extension handling', () => {
       sessionId,
       shelfId,
       true,
+      ENCRYPTION_PASSWORD,
       'keep_original',
       false,
       {} as BrowserWindow,
@@ -214,8 +213,41 @@ describe('DashboardService file extension handling', () => {
     const downloadPath = path.join(dataDir, 'secure-downloaded.bin');
     showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: downloadPath });
 
-    await dashboard.downloadFile(sessionId, fileId as string, {} as BrowserWindow);
+    await dashboard.downloadFile(sessionId, fileId as string, ENCRYPTION_PASSWORD, {} as BrowserWindow);
     expect(fs.readFileSync(downloadPath)).toEqual(originalBytes);
+  });
+
+  it('encrypted upload requires an encryption password', async () => {
+    const uploadPath = path.join(dataDir, 'missing-upload-password.bin');
+    fs.writeFileSync(uploadPath, crypto.randomBytes(128));
+    showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: [uploadPath] });
+
+    await expect(
+      dashboard.uploadFile(sessionId, shelfId, true, undefined, 'keep_original', false, {} as BrowserWindow),
+    ).rejects.toMatchObject({ code: 'ENCRYPTION_PASSWORD_REQUIRED' });
+  });
+
+  it('encrypted download requires a decryption password', async () => {
+    const uploadPath = path.join(dataDir, 'missing-download-password.bin');
+    fs.writeFileSync(uploadPath, crypto.randomBytes(256));
+    showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: [uploadPath] });
+    const uploadRes = await dashboard.uploadFile(
+      sessionId,
+      shelfId,
+      true,
+      ENCRYPTION_PASSWORD,
+      'keep_original',
+      false,
+      {} as BrowserWindow,
+    );
+    const fileId = uploadRes.files[0]?.file?.id as string;
+
+    const downloadPath = path.join(dataDir, 'missing-download-password-out.bin');
+    showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: downloadPath });
+
+    await expect(
+      dashboard.downloadFile(sessionId, fileId, undefined, {} as BrowserWindow),
+    ).rejects.toMatchObject({ code: 'DECRYPTION_PASSWORD_REQUIRED' });
   });
 
   it('encrypted upload stores ciphertext only in system storage', async () => {
@@ -228,6 +260,7 @@ describe('DashboardService file extension handling', () => {
       sessionId,
       shelfId,
       true,
+      ENCRYPTION_PASSWORD,
       'keep_original',
       false,
       {} as BrowserWindow,
@@ -259,6 +292,7 @@ describe('DashboardService file extension handling', () => {
       sessionId,
       shelfId,
       true,
+      ENCRYPTION_PASSWORD,
       'keep_original',
       false,
       {} as BrowserWindow,
@@ -274,7 +308,7 @@ describe('DashboardService file extension handling', () => {
     const downloadPath = path.join(dataDir, 'tamper-out.bin');
     showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: downloadPath });
 
-    await expect(dashboard.downloadFile(sessionId, file!.id, {} as BrowserWindow)).rejects.toMatchObject({
+    await expect(dashboard.downloadFile(sessionId, file!.id, ENCRYPTION_PASSWORD, {} as BrowserWindow)).rejects.toMatchObject({
       code: 'DECRYPTION_FAILED_AUTH_TAG',
     });
     expect(fs.existsSync(downloadPath)).toBe(false);
@@ -294,6 +328,7 @@ describe('DashboardService file extension handling', () => {
         sessionId,
         shelfId,
         true,
+        ENCRYPTION_PASSWORD,
         'keep_original',
         false,
         {} as BrowserWindow,
@@ -301,22 +336,15 @@ describe('DashboardService file extension handling', () => {
       const file = uploadRes.files[0]?.file;
       expect(file).toBeTruthy();
 
-      let openedPath = '';
-      openPathMock.mockImplementation(async (targetPath: string) => {
-        openedPath = targetPath;
-        expect(fs.existsSync(targetPath)).toBe(true);
-        expect(fs.readFileSync(targetPath)).toEqual(originalBytes);
-        return '';
-      });
-
-      const viewResult = await dashboard.viewEncryptedFile(sessionId, file!.id);
+      const viewResult = await dashboard.viewEncryptedFile(sessionId, file!.id, ENCRYPTION_PASSWORD);
       expect(viewResult.cleanupAfterMs).toBeGreaterThan(0);
-      expect(openPathMock).toHaveBeenCalledTimes(1);
-      expect(openedPath).toContain(`${path.sep}sccfs-secure-view${path.sep}`);
-      expect(fs.existsSync(openedPath)).toBe(true);
+      expect(viewResult.contentBase64).toBeTruthy();
+      expect(Buffer.from(viewResult.contentBase64, 'base64')).toEqual(originalBytes);
 
       await vi.advanceTimersByTimeAsync(viewResult.cleanupAfterMs + 1);
-      expect(fs.existsSync(openedPath)).toBe(false);
+      const cleanupRoot = path.join(os.tmpdir(), 'sccfs-secure-view');
+      const dirs = fs.existsSync(cleanupRoot) ? fs.readdirSync(cleanupRoot) : [];
+      expect(dirs.filter((dir) => dir.startsWith(`${file!.id}-`))).toHaveLength(0);
     } finally {
       vi.useRealTimers();
     }
@@ -333,6 +361,7 @@ describe('DashboardService file extension handling', () => {
         sessionId,
         shelfId,
         true,
+        ENCRYPTION_PASSWORD,
         'keep_original',
         false,
         {} as BrowserWindow,
@@ -345,10 +374,9 @@ describe('DashboardService file extension handling', () => {
       encryptedBytes[0] = encryptedBytes[0] ^ 0xff;
       fs.writeFileSync(storedPath, encryptedBytes);
 
-      await expect(dashboard.viewEncryptedFile(sessionId, file!.id)).rejects.toMatchObject({
+      await expect(dashboard.viewEncryptedFile(sessionId, file!.id, ENCRYPTION_PASSWORD)).rejects.toMatchObject({
         code: 'DECRYPTION_FAILED_AUTH_TAG',
       });
-      expect(openPathMock).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -363,6 +391,7 @@ describe('DashboardService file extension handling', () => {
       sessionId,
       shelfId,
       true,
+      ENCRYPTION_PASSWORD,
       'keep_original',
       false,
       {} as BrowserWindow,
@@ -373,10 +402,33 @@ describe('DashboardService file extension handling', () => {
     const downloadPath = path.join(dataDir, 'missing-meta-out.bin');
     showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: downloadPath });
 
-    await expect(dashboard.downloadFile(sessionId, fileId, {} as BrowserWindow)).rejects.toMatchObject({
+    await expect(dashboard.downloadFile(sessionId, fileId, ENCRYPTION_PASSWORD, {} as BrowserWindow)).rejects.toMatchObject({
       code: 'ENCRYPTION_METADATA_MISSING',
     });
     expect(fs.existsSync(downloadPath)).toBe(false);
+  });
+
+  it('explicit secure temp cleanup deletes decrypted temp file immediately', async () => {
+    const uploadPath = path.join(dataDir, 'cleanup-now.bin');
+    const originalBytes = crypto.randomBytes(128);
+    fs.writeFileSync(uploadPath, originalBytes);
+    showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: [uploadPath] });
+
+    const uploadRes = await dashboard.uploadFile(
+      sessionId,
+      shelfId,
+      true,
+      ENCRYPTION_PASSWORD,
+      'keep_original',
+      false,
+      {} as BrowserWindow,
+    );
+    const file = uploadRes.files[0]?.file;
+    expect(file).toBeTruthy();
+
+    const viewResult = await dashboard.viewEncryptedFile(sessionId, file!.id, ENCRYPTION_PASSWORD);
+    const cleanupRes = dashboard.cleanupSecureTempView(sessionId, viewResult.viewId);
+    expect(cleanupRes.deleted).toBe(true);
   });
 
   it('unencrypted upload and download flow remains unchanged', async () => {
@@ -389,6 +441,7 @@ describe('DashboardService file extension handling', () => {
       sessionId,
       shelfId,
       false,
+      undefined,
       'keep_original',
       false,
       {} as BrowserWindow,
@@ -403,7 +456,7 @@ describe('DashboardService file extension handling', () => {
 
     const downloadPath = path.join(dataDir, 'plain-flow-out.txt');
     showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: downloadPath });
-    await dashboard.downloadFile(sessionId, file!.id, {} as BrowserWindow);
+    await dashboard.downloadFile(sessionId, file!.id, undefined, {} as BrowserWindow);
 
     expect(fs.readFileSync(downloadPath, 'utf-8')).toBe(originalText);
   });
@@ -420,6 +473,7 @@ describe('DashboardService file extension handling', () => {
       sessionId,
       shelfId,
       true,
+      ENCRYPTION_PASSWORD,
       'move_to_system',
       false,
       {} as BrowserWindow,
@@ -441,6 +495,7 @@ describe('DashboardService file extension handling', () => {
       sessionId,
       shelfId,
       true,
+      ENCRYPTION_PASSWORD,
       'move_to_system',
       false,
       {} as BrowserWindow,
