@@ -102,6 +102,7 @@ const GCM_IV_BYTES = 12;
 const GCM_SALT_BYTES = 16;
 const TEMP_PART_EXTENSION = '.part';
 const SECURE_TEMP_VIEW_TTL_MS = 2 * 60 * 1000;
+const MAX_SECURE_TEMP_CLEANUP_RETRIES = 3;
 
 function extractErrorCode(error: unknown): string {
   return typeof error === 'object' && error && 'code' in error
@@ -131,6 +132,7 @@ function makeTempPartPath(basePath: string): string {
 export class DashboardService {
   private encryptionMasterSecret?: Buffer;
   private secureViewCleanupTimers = new Map<string, NodeJS.Timeout>();
+  private secureViewCleanupRetryCount = new Map<string, number>();
 
   constructor(
     private db: Database.Database,
@@ -638,6 +640,7 @@ export class DashboardService {
       this.removeSecureTempViewDir(tempDir);
     }
     this.secureViewCleanupTimers.clear();
+    this.secureViewCleanupRetryCount.clear();
   }
 
   deleteFile(sessionId: string, fileId: string): void {
@@ -1186,22 +1189,40 @@ export class DashboardService {
   }
 
   private scheduleSecureTempViewCleanup(tempDir: string): void {
-    if (this.secureViewCleanupTimers.has(tempDir)) return;
+    const existing = this.secureViewCleanupTimers.get(tempDir);
+    if (existing) {
+      clearTimeout(existing);
+    }
     const timer = setTimeout(() => {
       this.removeSecureTempViewDir(tempDir);
-      this.secureViewCleanupTimers.delete(tempDir);
     }, SECURE_TEMP_VIEW_TTL_MS);
-    timer.unref?.();
+    timer.unref();
+    this.secureViewCleanupRetryCount.set(tempDir, 0);
     this.secureViewCleanupTimers.set(tempDir, timer);
   }
 
   private removeSecureTempViewDir(tempDir: string): void {
-    if (this.secureViewCleanupTimers.has(tempDir)) {
-      const timer = this.secureViewCleanupTimers.get(tempDir);
-      if (timer) clearTimeout(timer);
+    const timer = this.secureViewCleanupTimers.get(tempDir);
+    if (timer) {
+      clearTimeout(timer);
       this.secureViewCleanupTimers.delete(tempDir);
     }
-    fs.rmSync(tempDir, { recursive: true, force: true });
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      this.secureViewCleanupRetryCount.delete(tempDir);
+    } catch {
+      const retryCount = (this.secureViewCleanupRetryCount.get(tempDir) ?? 0) + 1;
+      if (retryCount > MAX_SECURE_TEMP_CLEANUP_RETRIES) {
+        this.secureViewCleanupRetryCount.delete(tempDir);
+        return;
+      }
+      this.secureViewCleanupRetryCount.set(tempDir, retryCount);
+      const retry = setTimeout(() => {
+        this.removeSecureTempViewDir(tempDir);
+      }, 15_000 * retryCount);
+      retry.unref();
+      this.secureViewCleanupTimers.set(tempDir, retry);
+    }
   }
 
   private async assertStoredUploadIntegrity(

@@ -146,6 +146,9 @@ if (!gotTheLock) {
 }
 
 app.on('window-all-closed', () => {
-  services?.dashboardService.cleanupSecureTempViews();
   app.quit();
+});
+
+app.on('before-quit', () => {
+  services?.dashboardService.cleanupSecureTempViews();
 });
