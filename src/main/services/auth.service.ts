@@ -205,7 +205,7 @@ export class AuthService {
 
   async seedDefaultAdmin(username: string, password: string): Promise<void> {
     const users = this.db
-      .prepare('SELECT id, username FROM users ORDER BY created_at ASC, id ASC')
+      .prepare('SELECT id, username FROM users ORDER BY rowid ASC')
       .all() as Array<{ id: string; username: string }>;
     const hash = await hashPassword(password);
 
