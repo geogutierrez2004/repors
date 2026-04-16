@@ -6,7 +6,6 @@
  * supports bulk operations.
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { getDocument } from 'pdfjs-dist';
 import type { FileRecord, ShelfRecord, PaginatedResult, SourceHandlingMode } from '../../shared/types';
 import type { AddToast } from '../App';
 import type { SafeUser } from '../../shared/types';
@@ -252,6 +251,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     let cancelled = false;
     const render = async () => {
       try {
+        const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
         const bytes = decodeBase64ToBytes(viewer.contentBase64);
         const doc = await getDocument({ data: bytes, disableWorker: true }).promise;
         const page1 = await doc.getPage(1);
