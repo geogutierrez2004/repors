@@ -9,6 +9,7 @@ import { up as initialSchema } from '../../src/main/database/migrations/001-init
 import { AuthService, AuthError } from '../../src/main/services/auth.service';
 import { clearAllSessions } from '../../src/main/services/session.service';
 import { Role, AUTH_CONSTANTS } from '../../src/shared/constants';
+import { hashPassword } from '../../src/main/utils/password';
 
 function createTestDb(): Database.Database {
   const db = new Database(':memory:');
@@ -75,10 +76,14 @@ describe('AuthService', () => {
       const canonical = db.prepare('SELECT id FROM users LIMIT 1').get() as { id: string };
 
       const extraUserId = '22222222-2222-4222-a222-222222222222';
+      const extraHash = await hashPassword('StaffPass@1');
       db.prepare(
         `INSERT INTO users (id, username, password_hash, role)
          VALUES (?, ?, ?, ?)`,
-      ).run(extraUserId, 'old_staff', '$argon2id$dummy', Role.STAFF);
+      ).run(extraUserId, 'old_staff', extraHash, Role.STAFF);
+
+      const legacySession = await auth.login('legacy_admin', 'Legacy@1234');
+      const extraSession = await auth.login('old_staff', 'StaffPass@1');
 
       const shelfId = '33333333-3333-4333-a333-333333333333';
       const fileId = '44444444-4444-4444-a444-444444444444';
@@ -103,6 +108,8 @@ describe('AuthService', () => {
       const file = db.prepare('SELECT uploaded_by FROM files WHERE id = ?').get(fileId) as { uploaded_by: string };
       expect(shelf.created_by).toBe(canonical.id);
       expect(file.uploaded_by).toBe(canonical.id);
+      expect(auth.validateSession(legacySession.sessionId)).toBeNull();
+      expect(auth.validateSession(extraSession.sessionId)).toBeNull();
     });
   });
 
