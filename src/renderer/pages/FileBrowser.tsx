@@ -1060,7 +1060,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
           <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>{viewer.fileName}</div>
           <div style={{ marginTop: 14, maxHeight: '70vh', overflow: 'auto', border: '1px solid var(--border)', borderRadius: 6, padding: 10 }}>
             {previewKind === 'pdf' && <canvas ref={pdfCanvasRef} style={{ maxWidth: '100%', display: 'block' }} />}
-            {previewKind === 'image' && <img src={viewerDataUrl} style={{ maxWidth: '100%', maxHeight: '65vh' }} />}
+            {previewKind === 'image' && <img alt={viewer.fileName} src={viewerDataUrl} style={{ maxWidth: '100%', maxHeight: '65vh' }} />}
             {previewKind === 'text' && <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{viewerTextContent}</pre>}
             {previewKind === 'audio' && <audio controls src={viewerDataUrl} style={{ width: '100%' }} />}
             {previewKind === 'video' && <video controls src={viewerDataUrl} style={{ width: '100%', maxHeight: '65vh' }} />}
