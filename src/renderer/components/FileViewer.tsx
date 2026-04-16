@@ -4,7 +4,7 @@ import { Document, Page, pdfjs } from 'react-pdf';
 import type { FilePreviewData } from '../../shared/types';
 import { btnStyle, cardStyle } from '../App';
 
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+pdfjs.GlobalWorkerOptions.workerSrc = '';
 
 interface FileViewerProps {
   sessionId: string;
@@ -130,6 +130,7 @@ export function FileViewer({
       return (
         <Document
           file={{ data: decodeBase64(preview.fileContent) }}
+          options={{ disableWorker: true }}
           onLoadSuccess={({ numPages }) => setPdfPages(numPages)}
           onLoadError={() => setError('Viewer failed to render PDF. Download instead.')}
         >
