@@ -99,7 +99,7 @@ const PBKDF2_KEY_LEN = 32;
 const PBKDF2_DIGEST = 'sha512';
 const GCM_IV_BYTES = 12;
 const GCM_SALT_BYTES = 16;
-const TEMP_FILE_EXTENSION = '.part';
+const TEMP_PART_EXTENSION = '.part';
 
 function extractErrorCode(error: unknown): string {
   return typeof error === 'object' && error && 'code' in error
@@ -116,6 +116,10 @@ function countFilesRecursive(dirPath: string): number {
     else if (entry.isFile()) count += 1;
   }
   return count;
+}
+
+function makeTempPartPath(basePath: string): string {
+  return `${basePath}${TEMP_PART_EXTENSION}.${uuidv4()}`;
 }
 
 // ────────────────────────────────────────
@@ -434,7 +438,7 @@ export class DashboardService {
           const key = this.deriveFileKey(salt, iterations);
           const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
           const finalPath = path.join(filesDir, storedName);
-          const tempPath = `${finalPath}.${uuidv4()}${TEMP_FILE_EXTENSION}`;
+          const tempPath = makeTempPartPath(finalPath);
 
           try {
             await pipeline(
@@ -442,7 +446,7 @@ export class DashboardService {
               cipher,
               fs.createWriteStream(tempPath),
             );
-            fs.renameSync(tempPath, finalPath);
+            await fs.promises.rename(tempPath, finalPath);
             payloadWrittenToDisk = true;
           } catch (e) {
             if (fs.existsSync(tempPath)) {
@@ -587,7 +591,7 @@ export class DashboardService {
         throw new AuthError('ENCRYPTION_METADATA_MISSING', 'Encryption metadata is missing for this file');
       }
 
-      const tempOutPath = `${filePath}.${uuidv4()}${TEMP_FILE_EXTENSION}`;
+      const tempOutPath = makeTempPartPath(filePath);
       try {
         const salt = Buffer.from(metadata.salt, 'base64');
         const iv = Buffer.from(metadata.iv, 'base64');
@@ -597,7 +601,7 @@ export class DashboardService {
         decipher.setAuthTag(authTag);
 
         await pipeline(fs.createReadStream(srcPath), decipher, fs.createWriteStream(tempOutPath));
-        fs.renameSync(tempOutPath, filePath);
+        await fs.promises.rename(tempOutPath, filePath);
       } catch (e) {
         if (fs.existsSync(tempOutPath)) {
           fs.rmSync(tempOutPath, { force: true });
@@ -1114,7 +1118,7 @@ export class DashboardService {
     );
   }
 
-  private assertStoredUploadIntegrity(
+  private async assertStoredUploadIntegrity(
     fileId: string,
     storedPath: string,
     expectedPlaintextSha256: string,
@@ -1124,15 +1128,17 @@ export class DashboardService {
       throw new AuthError('UPLOAD_INTEGRITY_MISSING_PAYLOAD', 'Stored payload was not found after upload');
     }
 
-    return encrypted
-      ? this.assertEncryptedPayloadIntegrity(fileId, storedPath, expectedPlaintextSha256)
-      : this.assertPlainPayloadIntegrity(storedPath, expectedPlaintextSha256);
+    if (encrypted) {
+      await this.assertEncryptedPayloadIntegrity(fileId, storedPath, expectedPlaintextSha256);
+      return;
+    }
+    await this.assertPlainPayloadIntegrity(storedPath, expectedPlaintextSha256);
   }
 
   private async assertPlainPayloadIntegrity(storedPath: string, expectedPlaintextSha256: string): Promise<void> {
     const storedSha256 = await computeSha256Stream(storedPath);
     if (storedSha256 !== expectedPlaintextSha256) {
-      throw new AuthError('UPLOAD_INTEGRITY_HASH_MISMATCH', 'Stored file integrity verification failed');
+      throw new AuthError('UPLOAD_INTEGRITY_HASH_MISMATCH', 'Plain upload integrity verification failed');
     }
   }
 
@@ -1171,7 +1177,7 @@ export class DashboardService {
 
     const decryptedSha256 = hash.digest('hex');
     if (decryptedSha256 !== expectedPlaintextSha256) {
-      throw new AuthError('UPLOAD_INTEGRITY_HASH_MISMATCH', 'Stored file integrity verification failed');
+      throw new AuthError('UPLOAD_INTEGRITY_HASH_MISMATCH', 'Encrypted upload integrity verification failed');
     }
   }
 

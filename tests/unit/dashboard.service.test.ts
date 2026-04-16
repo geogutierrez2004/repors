@@ -32,6 +32,8 @@ vi.mock('electron', () => ({
 }));
 
 describe('DashboardService file extension handling', () => {
+  const ENCRYPTED_TEST_REPEAT_COUNT = 128;
+
   let db: Database.Database;
   let auth: AuthService;
   let dashboard: DashboardService;
@@ -213,7 +215,7 @@ describe('DashboardService file extension handling', () => {
 
   it('encrypted upload stores ciphertext only in system storage', async () => {
     const uploadPath = path.join(dataDir, 'ciphertext-check.txt');
-    const plaintext = Buffer.from('TOP-SECRET-DATA::'.repeat(128), 'utf-8');
+    const plaintext = Buffer.from('TOP-SECRET-DATA::'.repeat(ENCRYPTED_TEST_REPEAT_COUNT), 'utf-8');
     fs.writeFileSync(uploadPath, plaintext);
     showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: [uploadPath] });
 
@@ -229,11 +231,18 @@ describe('DashboardService file extension handling', () => {
     const file = uploadRes.files[0]?.file;
     expect(uploadRes.files[0]?.success).toBe(true);
     expect(file).toBeTruthy();
+    const keyRow = db
+      .prepare('SELECT salt, iv, auth_tag, iterations FROM encryption_keys WHERE file_id = ?')
+      .get(file!.id) as { salt: string; iv: string; auth_tag: string; iterations: number } | undefined;
+    expect(keyRow).toBeTruthy();
+    expect(keyRow?.iterations).toBeGreaterThanOrEqual(600_000);
 
     const storedPath = path.join(dataDir, 'files', file!.stored_name);
     const storedBytes = fs.readFileSync(storedPath);
     expect(storedBytes.equals(plaintext)).toBe(false);
-    expect(storedBytes.includes(Buffer.from('TOP-SECRET-DATA::', 'utf-8'))).toBe(false);
+    const storedSha = crypto.createHash('sha256').update(storedBytes).digest('hex');
+    const plainSha = crypto.createHash('sha256').update(plaintext).digest('hex');
+    expect(storedSha).not.toBe(plainSha);
   });
 
   it('tampered encrypted file fails auth-tag validation and leaves no plaintext output', async () => {
