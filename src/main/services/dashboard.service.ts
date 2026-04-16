@@ -32,6 +32,7 @@ import type {
   FileUploadResult,
   SourceHandlingMode,
   FileUploadItemResult,
+  SecureTempViewResult,
 } from '../../shared/types';
 import { normalizeExtension, guessExtensionFromMime } from '../utils/file-extension';
 
@@ -100,6 +101,8 @@ const PBKDF2_DIGEST = 'sha512';
 const GCM_IV_BYTES = 12;
 const GCM_SALT_BYTES = 16;
 const TEMP_PART_EXTENSION = '.part';
+const SECURE_TEMP_VIEW_TTL_MS = 2 * 60 * 1000;
+const MAX_SECURE_TEMP_CLEANUP_RETRIES = 3;
 
 function extractErrorCode(error: unknown): string {
   return typeof error === 'object' && error && 'code' in error
@@ -128,6 +131,8 @@ function makeTempPartPath(basePath: string): string {
 
 export class DashboardService {
   private encryptionMasterSecret?: Buffer;
+  private secureViewCleanupTimers = new Map<string, NodeJS.Timeout>();
+  private secureViewCleanupRetryCount = new Map<string, number>();
 
   constructor(
     private db: Database.Database,
@@ -581,39 +586,7 @@ export class DashboardService {
     if (!fileRow.is_encrypted) {
       await copyStream(srcPath, filePath);
     } else {
-      const metadata = this.db
-        .prepare('SELECT salt, iv, auth_tag, iterations FROM encryption_keys WHERE file_id = ?')
-        .get(fileId) as
-        | { salt: string; iv: string; auth_tag: string; iterations: number }
-        | undefined;
-
-      if (!metadata || !metadata.salt || !metadata.iv || !metadata.auth_tag || !metadata.iterations) {
-        throw new AuthError('ENCRYPTION_METADATA_MISSING', 'Encryption metadata is missing for this file');
-      }
-
-      const tempOutPath = makeTempPartPath(filePath);
-      try {
-        const salt = Buffer.from(metadata.salt, 'base64');
-        const iv = Buffer.from(metadata.iv, 'base64');
-        const authTag = Buffer.from(metadata.auth_tag, 'base64');
-        const key = this.deriveFileKey(salt, metadata.iterations);
-        const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
-        decipher.setAuthTag(authTag);
-
-        await pipeline(fs.createReadStream(srcPath), decipher, fs.createWriteStream(tempOutPath));
-        await fs.promises.rename(tempOutPath, filePath);
-      } catch (e) {
-        if (fs.existsSync(tempOutPath)) {
-          fs.rmSync(tempOutPath, { force: true });
-        }
-        const errorCode = extractErrorCode(e);
-        const authTagErrorCodes = new Set(['ERR_OSSL_EVP_BAD_DECRYPT']);
-        const message = e instanceof Error ? e.message.toLowerCase() : '';
-        if (authTagErrorCodes.has(errorCode) || message.includes('auth') || message.includes('authenticate')) {
-          throw new AuthError('DECRYPTION_FAILED_AUTH_TAG', 'File failed integrity check or is corrupted.');
-        }
-        throw new AuthError('DECRYPTION_FAILED_IO', 'Failed to decrypt and write file');
-      }
+      await this.decryptEncryptedPayloadToFile(fileId, srcPath, filePath);
     }
 
     this.db
@@ -621,6 +594,53 @@ export class DashboardService {
       .run(uuidv4(), fileId, session.userId);
 
     this.logActivity(session.userId, 'FILE_DOWNLOAD', `Downloaded ${fileRow.original_name}`);
+  }
+
+  async viewEncryptedFile(sessionId: string, fileId: string): Promise<SecureTempViewResult> {
+    const session = requireAuth(sessionId);
+    requirePermission(session.role, Permission.FILE_DOWNLOAD);
+
+    const fileRow = this.db
+      .prepare('SELECT * FROM files WHERE id = ?')
+      .get(fileId) as (FileRecord & { stored_name: string }) | undefined;
+    if (!fileRow) throw new AuthError('NOT_FOUND', 'File not found');
+    if (!fileRow.is_encrypted) {
+      throw new AuthError('FILE_NOT_ENCRYPTED', 'Only encrypted files can be opened with secure view');
+    }
+
+    const srcPath = path.join(getFilesDir(), fileRow.stored_name);
+    if (!fs.existsSync(srcPath)) {
+      throw new AuthError('FILE_MISSING', 'File data not found on disk');
+    }
+
+    const { tempDir, tempFilePath } = await this.createSecureTempViewTarget(fileRow);
+    try {
+      await this.decryptEncryptedPayloadToFile(fileId, srcPath, tempFilePath);
+
+      const openResult = await shell.openPath(tempFilePath);
+      if (openResult) {
+        throw new AuthError('VIEW_OPEN_FAILED', openResult);
+      }
+    } catch (error) {
+      this.removeSecureTempViewDir(tempDir);
+      if (error instanceof AuthError) {
+        throw error;
+      }
+      throw new AuthError('SECURE_VIEW_FAILED', 'Could not open secure temp view for this file');
+    }
+
+    this.scheduleSecureTempViewCleanup(tempDir);
+    this.logActivity(session.userId, 'FILE_VIEW', `Viewed encrypted ${fileRow.original_name}`);
+    return { cleanupAfterMs: SECURE_TEMP_VIEW_TTL_MS };
+  }
+
+  cleanupSecureTempViews(): void {
+    for (const [tempDir, timer] of this.secureViewCleanupTimers.entries()) {
+      clearTimeout(timer);
+      this.removeSecureTempViewDir(tempDir);
+    }
+    this.secureViewCleanupTimers.clear();
+    this.secureViewCleanupRetryCount.clear();
   }
 
   deleteFile(sessionId: string, fileId: string): void {
@@ -1116,6 +1136,93 @@ export class DashboardService {
       PBKDF2_KEY_LEN,
       PBKDF2_DIGEST,
     );
+  }
+
+  private async decryptEncryptedPayloadToFile(fileId: string, srcPath: string, outputPath: string): Promise<void> {
+    const metadata = this.db
+      .prepare('SELECT salt, iv, auth_tag, iterations FROM encryption_keys WHERE file_id = ?')
+      .get(fileId) as
+      | { salt: string; iv: string; auth_tag: string; iterations: number }
+      | undefined;
+
+    if (!metadata || !metadata.salt || !metadata.iv || !metadata.auth_tag || !metadata.iterations) {
+      throw new AuthError('ENCRYPTION_METADATA_MISSING', 'Encryption metadata is missing for this file');
+    }
+
+    const tempOutPath = makeTempPartPath(outputPath);
+    try {
+      const salt = Buffer.from(metadata.salt, 'base64');
+      const iv = Buffer.from(metadata.iv, 'base64');
+      const authTag = Buffer.from(metadata.auth_tag, 'base64');
+      const key = this.deriveFileKey(salt, metadata.iterations);
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAuthTag(authTag);
+
+      await pipeline(fs.createReadStream(srcPath), decipher, fs.createWriteStream(tempOutPath));
+      await fs.promises.rename(tempOutPath, outputPath);
+    } catch (e) {
+      if (fs.existsSync(tempOutPath)) {
+        fs.rmSync(tempOutPath, { force: true });
+      }
+      const errorCode = extractErrorCode(e);
+      const authTagErrorCodes = new Set(['ERR_OSSL_EVP_BAD_DECRYPT']);
+      const message = e instanceof Error ? e.message.toLowerCase() : '';
+      if (authTagErrorCodes.has(errorCode) || message.includes('auth') || message.includes('authenticate')) {
+        throw new AuthError('DECRYPTION_FAILED_AUTH_TAG', 'File failed integrity check or is corrupted.');
+      }
+      throw new AuthError('DECRYPTION_FAILED_IO', 'Failed to decrypt and write file');
+    }
+  }
+
+  private async createSecureTempViewTarget(fileRow: {
+    id: string;
+    original_name: string;
+    original_extension?: string | null;
+    stored_name: string;
+    mime_type: string | null;
+  }): Promise<{ tempDir: string; tempFilePath: string }> {
+    const secureTempRoot = path.join(app.getPath('temp'), 'sccfs-secure-view');
+    fs.mkdirSync(secureTempRoot, { recursive: true, mode: 0o700 });
+    const tempDir = await fs.promises.mkdtemp(path.join(secureTempRoot, `${fileRow.id}-`));
+    const tempFilePath = path.join(tempDir, this.resolveDownloadFileName(fileRow));
+    return { tempDir, tempFilePath };
+  }
+
+  private scheduleSecureTempViewCleanup(tempDir: string): void {
+    const existing = this.secureViewCleanupTimers.get(tempDir);
+    if (existing) {
+      clearTimeout(existing);
+    }
+    const timer = setTimeout(() => {
+      this.removeSecureTempViewDir(tempDir);
+    }, SECURE_TEMP_VIEW_TTL_MS);
+    timer.unref();
+    this.secureViewCleanupRetryCount.set(tempDir, 0);
+    this.secureViewCleanupTimers.set(tempDir, timer);
+  }
+
+  private removeSecureTempViewDir(tempDir: string): void {
+    const timer = this.secureViewCleanupTimers.get(tempDir);
+    if (timer) {
+      clearTimeout(timer);
+      this.secureViewCleanupTimers.delete(tempDir);
+    }
+    try {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+      this.secureViewCleanupRetryCount.delete(tempDir);
+    } catch {
+      const retryCount = (this.secureViewCleanupRetryCount.get(tempDir) ?? 0) + 1;
+      if (retryCount > MAX_SECURE_TEMP_CLEANUP_RETRIES) {
+        this.secureViewCleanupRetryCount.delete(tempDir);
+        return;
+      }
+      this.secureViewCleanupRetryCount.set(tempDir, retryCount);
+      const retry = setTimeout(() => {
+        this.removeSecureTempViewDir(tempDir);
+      }, 15_000 * retryCount);
+      retry.unref();
+      this.secureViewCleanupTimers.set(tempDir, retry);
+    }
   }
 
   private async assertStoredUploadIntegrity(

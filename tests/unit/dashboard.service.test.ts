@@ -11,10 +11,11 @@ import { DashboardService } from '../../src/main/services/dashboard.service';
 import { AuthService } from '../../src/main/services/auth.service';
 import { clearAllSessions } from '../../src/main/services/session.service';
 
-const { showOpenDialogMock, showSaveDialogMock, trashItemMock } = vi.hoisted(() => ({
+const { showOpenDialogMock, showSaveDialogMock, trashItemMock, openPathMock } = vi.hoisted(() => ({
   showOpenDialogMock: vi.fn(),
   showSaveDialogMock: vi.fn(),
   trashItemMock: vi.fn(),
+  openPathMock: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -24,6 +25,7 @@ vi.mock('electron', () => ({
   },
   shell: {
     trashItem: trashItemMock,
+    openPath: openPathMock,
   },
   BrowserWindow: class BrowserWindow {},
   app: {
@@ -47,7 +49,9 @@ describe('DashboardService file extension handling', () => {
     showOpenDialogMock.mockReset();
     showSaveDialogMock.mockReset();
     trashItemMock.mockReset();
+    openPathMock.mockReset();
     trashItemMock.mockResolvedValue(undefined);
+    openPathMock.mockResolvedValue('');
 
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sccfs-ext-'));
     process.env['SCCFS_DATA_DIR'] = dataDir;
@@ -69,6 +73,7 @@ describe('DashboardService file extension handling', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     db.close();
     delete process.env['SCCFS_DATA_DIR'];
     fs.rmSync(dataDir, { recursive: true, force: true });
@@ -275,6 +280,78 @@ describe('DashboardService file extension handling', () => {
     expect(fs.existsSync(downloadPath)).toBe(false);
     const tempParts = fs.readdirSync(dataDir).filter((name) => name.includes('tamper-out.bin') && name.endsWith('.part'));
     expect(tempParts).toHaveLength(0);
+  });
+
+  it('encrypted secure view decrypts to temp file and temp file is deleted after timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const uploadPath = path.join(dataDir, 'secure-view.bin');
+      const originalBytes = crypto.randomBytes(2048);
+      fs.writeFileSync(uploadPath, originalBytes);
+      showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: [uploadPath] });
+
+      const uploadRes = await dashboard.uploadFile(
+        sessionId,
+        shelfId,
+        true,
+        'keep_original',
+        false,
+        {} as BrowserWindow,
+      );
+      const file = uploadRes.files[0]?.file;
+      expect(file).toBeTruthy();
+
+      let openedPath = '';
+      openPathMock.mockImplementation(async (targetPath: string) => {
+        openedPath = targetPath;
+        expect(fs.existsSync(targetPath)).toBe(true);
+        expect(fs.readFileSync(targetPath)).toEqual(originalBytes);
+        return '';
+      });
+
+      const viewResult = await dashboard.viewEncryptedFile(sessionId, file!.id);
+      expect(viewResult.cleanupAfterMs).toBeGreaterThan(0);
+      expect(openPathMock).toHaveBeenCalledTimes(1);
+      expect(openedPath).toContain(`${path.sep}sccfs-secure-view${path.sep}`);
+      expect(fs.existsSync(openedPath)).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(viewResult.cleanupAfterMs + 1);
+      expect(fs.existsSync(openedPath)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('tampered encrypted file fails secure view integrity check without leaving plaintext temp output', async () => {
+    vi.useFakeTimers();
+    try {
+      const uploadPath = path.join(dataDir, 'tamper-view.bin');
+      fs.writeFileSync(uploadPath, crypto.randomBytes(512));
+      showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: [uploadPath] });
+
+      const uploadRes = await dashboard.uploadFile(
+        sessionId,
+        shelfId,
+        true,
+        'keep_original',
+        false,
+        {} as BrowserWindow,
+      );
+      const file = uploadRes.files[0]?.file;
+      expect(file).toBeTruthy();
+
+      const storedPath = path.join(dataDir, 'files', file!.stored_name);
+      const encryptedBytes = fs.readFileSync(storedPath);
+      encryptedBytes[0] = encryptedBytes[0] ^ 0xff;
+      fs.writeFileSync(storedPath, encryptedBytes);
+
+      await expect(dashboard.viewEncryptedFile(sessionId, file!.id)).rejects.toMatchObject({
+        code: 'DECRYPTION_FAILED_AUTH_TAG',
+      });
+      expect(openPathMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('missing encryption metadata fails cleanly for encrypted file', async () => {

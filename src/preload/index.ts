@@ -21,6 +21,7 @@ import type {
   SessionInfo,
   PaginatedResult,
   FileUploadResult,
+  SecureTempViewResult,
   SourceHandlingMode,
 } from '../shared/types';
 
@@ -106,6 +107,9 @@ const api = {
 
     download: (sessionId: string, fileId: string) =>
       safeInvoke(IPC_CHANNELS.FILES_DOWNLOAD, { sessionId, fileId }),
+
+    viewEncrypted: (sessionId: string, fileId: string) =>
+      safeInvoke<SecureTempViewResult>(IPC_CHANNELS.FILES_VIEW_ENCRYPTED, { sessionId, fileId }),
 
     delete: (sessionId: string, fileId: string) =>
       safeInvoke(IPC_CHANNELS.FILES_DELETE, { sessionId, fileId }),

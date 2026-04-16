@@ -15,6 +15,7 @@ import {
   FileListSchema,
   FileUploadSchema,
   FileDownloadSchema,
+  FileViewEncryptedSchema,
   FileDeleteSchema,
   FileMoveSchema,
   ShelfCreateSchema,
@@ -63,6 +64,7 @@ const DASHBOARD_CHANNELS = [
   IPC_CHANNELS.FILES_LIST,
   IPC_CHANNELS.FILES_UPLOAD,
   IPC_CHANNELS.FILES_DOWNLOAD,
+  IPC_CHANNELS.FILES_VIEW_ENCRYPTED,
   IPC_CHANNELS.FILES_DELETE,
   IPC_CHANNELS.FILES_MOVE,
   IPC_CHANNELS.SHELVES_LIST,
@@ -129,6 +131,16 @@ export function registerDashboardHandlers(
         const win = getSenderWindow(event);
         await dashboardService.downloadFile(sessionId, fileId, win);
         return ok(null);
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
+
+  ipcMain.handle(IPC_CHANNELS.FILES_VIEW_ENCRYPTED, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId, fileId } = FileViewEncryptedSchema.parse(payload);
+        return ok(await dashboardService.viewEncryptedFile(sessionId, fileId));
       } catch (e) {
         return handleError(e);
       }
