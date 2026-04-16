@@ -26,7 +26,7 @@ async function bootstrap(): Promise<void> {
   const dashboardService = new DashboardService(db);
 
   // Seed default admin if no users exist
-  await authService.seedDefaultAdmin('admin', 'Admin@1234');
+  await authService.seedDefaultAdmin('fs_adm1', 'admin123');
 
   // Seed system shelves and default storage quota
   dashboardService.seedSystemShelves();
@@ -64,4 +64,3 @@ if (!gotTheLock) {
 app.on('window-all-closed', () => {
   app.quit();
 });
-

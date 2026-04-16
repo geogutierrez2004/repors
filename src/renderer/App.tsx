@@ -10,7 +10,6 @@ import type { SafeUser } from '../shared/types';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { FileBrowser } from './pages/FileBrowser';
-import { UserManagement } from './pages/UserManagement';
 import { ActivityLog } from './pages/ActivityLog';
 import { StorageBackup } from './pages/StorageBackup';
 import { SecurityDashboard } from './pages/SecurityDashboard';
@@ -19,7 +18,7 @@ import { SecurityDashboard } from './pages/SecurityDashboard';
 // Types
 // ────────────────────────────────────────
 
-type Page = 'dashboard' | 'files' | 'users' | 'activity' | 'storage' | 'security';
+type Page = 'dashboard' | 'files' | 'activity' | 'storage' | 'security';
 
 export interface Toast {
   id: string;
@@ -57,7 +56,6 @@ const NAV_ITEMS: Array<{ id: Page; label: string; icon: string; adminOnly?: bool
   { id: 'dashboard', label: 'Overview', icon: '🏠' },
   { id: 'files', label: 'Files', icon: '📁' },
   { id: 'activity', label: 'Activity Log', icon: '📊' },
-  { id: 'users', label: 'Users', icon: '👥', adminOnly: true },
   { id: 'storage', label: 'Storage & Backup', icon: '💾', adminOnly: true },
   { id: 'security', label: 'Security', icon: '🔒', adminOnly: true },
 ];
@@ -453,7 +451,6 @@ export function App(): React.JSX.Element {
           {page === 'dashboard' && <Dashboard {...sharedProps} />}
           {page === 'files' && <FileBrowser {...sharedProps} />}
           {page === 'activity' && <ActivityLog {...sharedProps} />}
-          {page === 'users' && isAdmin && <UserManagement {...sharedProps} />}
           {page === 'storage' && isAdmin && <StorageBackup {...sharedProps} />}
           {page === 'security' && isAdmin && <SecurityDashboard {...sharedProps} />}
         </main>
@@ -484,4 +481,3 @@ const keyframeStyles = `
     to { transform: rotate(360deg); }
   }
 `;
-
