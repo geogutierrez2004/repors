@@ -365,7 +365,15 @@ export class DashboardService {
       fs.unlinkSync(storedPath);
     }
 
-    this.db.prepare('DELETE FROM files WHERE id = ?').run(fileId);
+    // Clean up dependent records before deleting file
+    const deleteTransaction = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM upload_history WHERE file_id = ?').run(fileId);
+      this.db.prepare('DELETE FROM downloads WHERE file_id = ?').run(fileId);
+      this.db.prepare('DELETE FROM encryption_keys WHERE file_id = ?').run(fileId);
+      this.db.prepare('DELETE FROM files WHERE id = ?').run(fileId);
+    });
+    deleteTransaction();
+
     this.logActivity(session.userId, 'FILE_DELETE', `Deleted ${fileRow.original_name}`);
   }
 
