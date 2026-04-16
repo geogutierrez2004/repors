@@ -132,7 +132,7 @@ describe('DashboardService file extension handling', () => {
     expect(fs.readFileSync(downloadPath, 'utf-8')).toBe('fallback');
   });
 
-  it('existing filenames with valid extensions are not modified on download', async () => {
+  it('existing filenames with valid extensions take precedence over stored extension metadata', async () => {
     const fileId = uuidv4();
     const storedName = 'stored-file.txt';
     const fileBytes = Buffer.from('keep extension');

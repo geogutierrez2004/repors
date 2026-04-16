@@ -31,6 +31,7 @@ import type {
 } from '../../shared/types';
 import { getDatabasePath, setDatabase, getDatabase } from '../database/connection';
 import { runMigrations } from '../database';
+import { normalizeExtension, guessExtensionFromMime } from '../utils/file-extension';
 
 // ────────────────────────────────────────
 // Helpers
@@ -90,13 +91,6 @@ function countFilesRecursive(dirPath: string): number {
     else if (entry.isFile()) count += 1;
   }
   return count;
-}
-
-function normalizeExtension(ext: string | null | undefined): string | null {
-  if (!ext) return null;
-  const clean = ext.trim().toLowerCase();
-  if (!clean || clean === '.') return null;
-  return clean.startsWith('.') ? clean : `.${clean}`;
 }
 
 function replaceDirectory(targetDir: string, sourceDir: string): void {
@@ -900,37 +894,21 @@ export class DashboardService {
     return map[ext.toLowerCase()] ?? 'application/octet-stream';
   }
 
-  private guessExtensionFromMime(mimeType: string | null): string | null {
-    if (!mimeType) return null;
-    const map: Record<string, string> = {
-      'application/pdf': '.pdf',
-      'application/msword': '.doc',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx',
-      'application/vnd.ms-excel': '.xls',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': '.xlsx',
-      'image/png': '.png',
-      'image/jpeg': '.jpg',
-      'text/plain': '.txt',
-      'text/csv': '.csv',
-      'application/zip': '.zip',
-    };
-    return map[mimeType.toLowerCase()] ?? null;
-  }
-
   private resolveDownloadFileName(file: {
     original_name: string;
     original_extension?: string | null;
     stored_name: string;
     mime_type: string | null;
   }): string {
-    if (normalizeExtension(path.extname(file.original_name))) {
+    const originalNameExtension = normalizeExtension(path.extname(file.original_name));
+    if (originalNameExtension) {
       return file.original_name;
     }
 
     const extension =
       normalizeExtension(file.original_extension) ??
       normalizeExtension(path.extname(file.stored_name)) ??
-      this.guessExtensionFromMime(file.mime_type);
+      guessExtensionFromMime(file.mime_type);
 
     return extension ? `${file.original_name}${extension}` : file.original_name;
   }
