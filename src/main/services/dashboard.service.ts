@@ -51,6 +51,20 @@ function getFilesDir(): string {
   return dir;
 }
 
+function getInitialQuotaBytes(): number {
+  try {
+    const stat = fs.statfsSync(getFilesDir(), { bigint: true });
+    const availableBytes = stat.bavail * stat.bsize;
+    const autoQuota = (availableBytes * BigInt(STORAGE_CONSTANTS.AUTO_QUOTA_PERCENT)) / 100n;
+
+    if (autoQuota <= 0n) return STORAGE_CONSTANTS.DEFAULT_QUOTA_BYTES;
+    const maxSafe = BigInt(Number.MAX_SAFE_INTEGER);
+    return Number(autoQuota > maxSafe ? maxSafe : autoQuota);
+  } catch {
+    return STORAGE_CONSTANTS.DEFAULT_QUOTA_BYTES;
+  }
+}
+
 function getBackupsDir(): string {
   const appData =
     process.env['SCCFS_DATA_DIR'] ||
@@ -96,7 +110,7 @@ export class DashboardService {
     if (!quota) {
       this.db
         .prepare("INSERT INTO storage_config (key, value) VALUES ('quota_bytes', ?)")
-        .run(String(STORAGE_CONSTANTS.DEFAULT_QUOTA_BYTES));
+        .run(String(getInitialQuotaBytes()));
     }
   }
 

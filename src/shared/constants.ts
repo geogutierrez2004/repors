@@ -35,6 +35,8 @@ export const STORAGE_CONSTANTS = {
   MAX_FILE_SIZE: 2 * 1024 * 1024 * 1024,
   /** Default storage quota in bytes (500 GB). */
   DEFAULT_QUOTA_BYTES: 500 * 1024 * 1024 * 1024,
+  /** Initial auto-quota is set to this percentage of currently available disk space. */
+  AUTO_QUOTA_PERCENT: 80,
 } as const;
 
 /** System shelf names that cannot be deleted. */
