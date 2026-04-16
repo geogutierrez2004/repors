@@ -105,6 +105,10 @@ declare global {
         list(sessionId: string): Promise<IpcResponse<SessionInfo[]>>;
         terminate(sessionId: string, targetSessionId: string): Promise<IpcResponse<null>>;
       };
+
+      app: {
+        onRestored(callback: (payload: { sessionInvalidated: boolean }) => void): () => void;
+      };
     };
   }
 }

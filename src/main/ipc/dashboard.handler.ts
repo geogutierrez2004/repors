@@ -54,174 +54,218 @@ function getSenderWindow(event: Electron.IpcMainInvokeEvent): BrowserWindow {
   return win;
 }
 
-export function registerDashboardHandlers(dashboardService: DashboardService): void {
+type InvokeGuard = <T>(invoke: () => Promise<IpcResponse<T>>) => Promise<IpcResponse<T>>;
+
+const passthroughGuard: InvokeGuard = async <T>(invoke: () => Promise<IpcResponse<T>>) => invoke();
+
+export function registerDashboardHandlers(
+  dashboardService: DashboardService,
+  guard: InvokeGuard = passthroughGuard,
+): () => void {
   // ── Dashboard stats ──────────────────
-  ipcMain.handle(IPC_CHANNELS.DASHBOARD_STATS, async (_event, payload: unknown) => {
-    try {
-      const { sessionId } = SessionIdOnlySchema.parse(payload);
-      return ok(dashboardService.getStats(sessionId));
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.DASHBOARD_STATS, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId } = SessionIdOnlySchema.parse(payload);
+        return ok(dashboardService.getStats(sessionId));
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
 
   // ── Files ───────────────────────────
-  ipcMain.handle(IPC_CHANNELS.FILES_LIST, async (_event, payload: unknown) => {
-    try {
-      const { sessionId, shelfId, search, page, pageSize } = FileListSchema.parse(payload);
-      return ok(dashboardService.listFiles(sessionId, { shelfId, search, page, pageSize }));
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.FILES_LIST, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId, shelfId, search, page, pageSize } = FileListSchema.parse(payload);
+        return ok(dashboardService.listFiles(sessionId, { shelfId, search, page, pageSize }));
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
 
-  ipcMain.handle(IPC_CHANNELS.FILES_UPLOAD, async (event, payload: unknown) => {
-    try {
-      const { sessionId, shelfId, encrypt } = FileUploadSchema.parse(payload);
-      const win = getSenderWindow(event);
-      return ok(await dashboardService.uploadFile(sessionId, shelfId, encrypt, win));
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.FILES_UPLOAD, (event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId, shelfId, encrypt } = FileUploadSchema.parse(payload);
+        const win = getSenderWindow(event);
+        return ok(await dashboardService.uploadFile(sessionId, shelfId, encrypt, win));
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
 
-  ipcMain.handle(IPC_CHANNELS.FILES_DOWNLOAD, async (event, payload: unknown) => {
-    try {
-      const { sessionId, fileId } = FileDownloadSchema.parse(payload);
-      const win = getSenderWindow(event);
-      await dashboardService.downloadFile(sessionId, fileId, win);
-      return ok(null);
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.FILES_DOWNLOAD, (event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId, fileId } = FileDownloadSchema.parse(payload);
+        const win = getSenderWindow(event);
+        await dashboardService.downloadFile(sessionId, fileId, win);
+        return ok(null);
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
 
-  ipcMain.handle(IPC_CHANNELS.FILES_DELETE, async (_event, payload: unknown) => {
-    try {
-      const { sessionId, fileId } = FileDeleteSchema.parse(payload);
-      dashboardService.deleteFile(sessionId, fileId);
-      return ok(null);
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.FILES_DELETE, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId, fileId } = FileDeleteSchema.parse(payload);
+        dashboardService.deleteFile(sessionId, fileId);
+        return ok(null);
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
 
-  ipcMain.handle(IPC_CHANNELS.FILES_MOVE, async (_event, payload: unknown) => {
-    try {
-      const { sessionId, fileId, shelfId } = FileMoveSchema.parse(payload);
-      return ok(dashboardService.moveFile(sessionId, fileId, shelfId));
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.FILES_MOVE, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId, fileId, shelfId } = FileMoveSchema.parse(payload);
+        return ok(dashboardService.moveFile(sessionId, fileId, shelfId));
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
 
   // ── Shelves ──────────────────────────
-  ipcMain.handle(IPC_CHANNELS.SHELVES_LIST, async (_event, payload: unknown) => {
-    try {
-      const { sessionId } = SessionIdOnlySchema.parse(payload);
-      return ok(dashboardService.listShelves(sessionId));
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.SHELVES_LIST, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId } = SessionIdOnlySchema.parse(payload);
+        return ok(dashboardService.listShelves(sessionId));
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
 
-  ipcMain.handle(IPC_CHANNELS.SHELVES_CREATE, async (_event, payload: unknown) => {
-    try {
-      const { sessionId, name } = ShelfCreateSchema.parse(payload);
-      return ok(dashboardService.createShelf(sessionId, name));
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.SHELVES_CREATE, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId, name } = ShelfCreateSchema.parse(payload);
+        return ok(dashboardService.createShelf(sessionId, name));
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
 
-  ipcMain.handle(IPC_CHANNELS.SHELVES_DELETE, async (_event, payload: unknown) => {
-    try {
-      const { sessionId, shelfId } = ShelfDeleteSchema.parse(payload);
-      dashboardService.deleteShelf(sessionId, shelfId);
-      return ok(null);
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.SHELVES_DELETE, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId, shelfId } = ShelfDeleteSchema.parse(payload);
+        dashboardService.deleteShelf(sessionId, shelfId);
+        return ok(null);
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
 
-  ipcMain.handle(IPC_CHANNELS.SHELVES_RENAME, async (_event, payload: unknown) => {
-    try {
-      const { sessionId, shelfId, name } = ShelfRenameSchema.parse(payload);
-      return ok(dashboardService.renameShelf(sessionId, shelfId, name));
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.SHELVES_RENAME, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId, shelfId, name } = ShelfRenameSchema.parse(payload);
+        return ok(dashboardService.renameShelf(sessionId, shelfId, name));
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
 
   // ── Activity log ─────────────────────
-  ipcMain.handle(IPC_CHANNELS.ACTIVITY_LIST, async (_event, payload: unknown) => {
-    try {
-      const { sessionId, userId, action, dateFrom, dateTo, page, pageSize } =
-        ActivityListSchema.parse(payload);
-      return ok(dashboardService.listActivity(sessionId, { userId, action, dateFrom, dateTo, page, pageSize }));
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.ACTIVITY_LIST, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId, userId, action, dateFrom, dateTo, page, pageSize } =
+          ActivityListSchema.parse(payload);
+        return ok(dashboardService.listActivity(sessionId, { userId, action, dateFrom, dateTo, page, pageSize }));
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
 
   // ── Storage & backup ─────────────────
-  ipcMain.handle(IPC_CHANNELS.STORAGE_STATS, async (_event, payload: unknown) => {
-    try {
-      const { sessionId } = SessionIdOnlySchema.parse(payload);
-      return ok(dashboardService.getStorageStats(sessionId));
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.STORAGE_STATS, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId } = SessionIdOnlySchema.parse(payload);
+        return ok(dashboardService.getStorageStats(sessionId));
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
 
-  ipcMain.handle(IPC_CHANNELS.STORAGE_SET_QUOTA, async (_event, payload: unknown) => {
-    try {
-      const { sessionId, quotaBytes } = StorageSetQuotaSchema.parse(payload);
-      dashboardService.setQuota(sessionId, quotaBytes);
-      return ok(null);
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.STORAGE_SET_QUOTA, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId, quotaBytes } = StorageSetQuotaSchema.parse(payload);
+        dashboardService.setQuota(sessionId, quotaBytes);
+        return ok(null);
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
 
-  ipcMain.handle(IPC_CHANNELS.STORAGE_BACKUP, async (event, payload: unknown) => {
-    try {
-      const { sessionId } = SessionIdOnlySchema.parse(payload);
-      const win = getSenderWindow(event);
-      return ok(await dashboardService.backup(sessionId, win));
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.STORAGE_BACKUP, (event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId } = SessionIdOnlySchema.parse(payload);
+        const win = getSenderWindow(event);
+        return ok(await dashboardService.backup(sessionId, win));
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
 
-  ipcMain.handle(IPC_CHANNELS.STORAGE_RESTORE, async (event, payload: unknown) => {
-    try {
-      const { sessionId } = SessionIdOnlySchema.parse(payload);
-      const win = getSenderWindow(event);
-      await dashboardService.restore(sessionId, win);
-      return ok(null);
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.STORAGE_RESTORE, (event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId } = SessionIdOnlySchema.parse(payload);
+        const win = getSenderWindow(event);
+        await dashboardService.restore(sessionId, win);
+        return ok(null);
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
 
   // ── Sessions ─────────────────────────
-  ipcMain.handle(IPC_CHANNELS.SESSIONS_LIST, async (_event, payload: unknown) => {
-    try {
-      const { sessionId } = SessionIdOnlySchema.parse(payload);
-      return ok(dashboardService.listActiveSessions(sessionId));
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.SESSIONS_LIST, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId } = SessionIdOnlySchema.parse(payload);
+        return ok(dashboardService.listActiveSessions(sessionId));
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
 
-  ipcMain.handle(IPC_CHANNELS.SESSIONS_TERMINATE, async (_event, payload: unknown) => {
-    try {
-      const { sessionId, targetSessionId } = SessionTerminateSchema.parse(payload);
-      dashboardService.terminateSession(sessionId, targetSessionId);
-      return ok(null);
-    } catch (e) {
-      return handleError(e);
-    }
-  });
+  ipcMain.handle(IPC_CHANNELS.SESSIONS_TERMINATE, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId, targetSessionId } = SessionTerminateSchema.parse(payload);
+        dashboardService.terminateSession(sessionId, targetSessionId);
+        return ok(null);
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
+
+  return () => {
+    ipcMain.removeHandler(IPC_CHANNELS.DASHBOARD_STATS);
+    ipcMain.removeHandler(IPC_CHANNELS.FILES_LIST);
+    ipcMain.removeHandler(IPC_CHANNELS.FILES_UPLOAD);
+    ipcMain.removeHandler(IPC_CHANNELS.FILES_DOWNLOAD);
+    ipcMain.removeHandler(IPC_CHANNELS.FILES_DELETE);
+    ipcMain.removeHandler(IPC_CHANNELS.FILES_MOVE);
+    ipcMain.removeHandler(IPC_CHANNELS.SHELVES_LIST);
+    ipcMain.removeHandler(IPC_CHANNELS.SHELVES_CREATE);
+    ipcMain.removeHandler(IPC_CHANNELS.SHELVES_DELETE);
+    ipcMain.removeHandler(IPC_CHANNELS.SHELVES_RENAME);
+    ipcMain.removeHandler(IPC_CHANNELS.ACTIVITY_LIST);
+    ipcMain.removeHandler(IPC_CHANNELS.STORAGE_STATS);
+    ipcMain.removeHandler(IPC_CHANNELS.STORAGE_SET_QUOTA);
+    ipcMain.removeHandler(IPC_CHANNELS.STORAGE_BACKUP);
+    ipcMain.removeHandler(IPC_CHANNELS.STORAGE_RESTORE);
+    ipcMain.removeHandler(IPC_CHANNELS.SESSIONS_LIST);
+    ipcMain.removeHandler(IPC_CHANNELS.SESSIONS_TERMINATE);
+  };
 }
