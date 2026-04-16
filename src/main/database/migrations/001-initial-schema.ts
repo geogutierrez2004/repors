@@ -28,6 +28,17 @@ export function up(db: Database.Database): void {
       updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS file_payloads (
+      id            TEXT PRIMARY KEY,
+      stored_name   TEXT NOT NULL,
+      sha256        TEXT NOT NULL,
+      size_bytes    INTEGER NOT NULL,
+      is_encrypted  INTEGER NOT NULL DEFAULT 0,
+      ref_count     INTEGER NOT NULL DEFAULT 1,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS files (
       id            TEXT PRIMARY KEY,
       original_name TEXT NOT NULL,
@@ -39,6 +50,7 @@ export function up(db: Database.Database): void {
       shelf_id      TEXT NOT NULL REFERENCES shelves(id),
       uploaded_by   TEXT NOT NULL REFERENCES users(id),
       is_encrypted  INTEGER NOT NULL DEFAULT 0,
+      payload_id    TEXT REFERENCES file_payloads(id),
       created_at    TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
     );
@@ -87,5 +99,8 @@ export function up(db: Database.Database): void {
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE INDEX IF NOT EXISTS idx_file_payloads_sha_size_enc
+      ON file_payloads (sha256, size_bytes, is_encrypted);
   `);
 }

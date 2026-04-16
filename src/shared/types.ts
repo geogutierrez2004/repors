@@ -92,6 +92,22 @@ export interface FileRecord {
   updated_at: string;
 }
 
+export type SourceHandlingMode = 'keep_original' | 'move_to_system' | 'ask_each_time';
+
+export interface FileUploadItemResult {
+  source_path: string;
+  source_name: string;
+  success: boolean;
+  removed_original: boolean;
+  mode: SourceHandlingMode;
+  file?: FileRecord;
+  error?: IpcError;
+}
+
+export interface FileUploadResult {
+  files: FileUploadItemResult[];
+}
+
 /** Shelf record with aggregate counts. */
 export interface ShelfRecord {
   id: string;

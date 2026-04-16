@@ -107,9 +107,16 @@ export function registerDashboardHandlers(
   ipcMain.handle(IPC_CHANNELS.FILES_UPLOAD, (event, payload: unknown) =>
     guard(async () => {
       try {
-        const { sessionId, shelfId, encrypt } = FileUploadSchema.parse(payload);
+        const { sessionId, shelfId, encrypt, sourceHandlingMode, confirmPermanentDelete } = FileUploadSchema.parse(payload);
         const win = getSenderWindow(event);
-        return ok(await dashboardService.uploadFile(sessionId, shelfId, encrypt, win));
+        return ok(await dashboardService.uploadFile(
+          sessionId,
+          shelfId,
+          encrypt,
+          sourceHandlingMode,
+          confirmPermanentDelete,
+          win,
+        ));
       } catch (e) {
         return handleError(e);
       }

@@ -102,3 +102,12 @@ docs/
 - Session inactivity timeout (30 min) and absolute expiration (8 hr)
 - Account lockout after 5 failed attempts
 - Role-based access control on every privileged operation
+
+## Encrypted Upload/Download Notes
+
+- Upload supports standard and AES-256-GCM encrypted storage.
+- Encrypted files use per-file salt + IV + auth tag with PBKDF2-SHA512 key derivation (600,000 iterations).
+- Decryption is performed only in the Electron main process during download.
+- If encrypted metadata is missing or the auth tag fails validation, download fails with a corruption/integrity error.
+- `files.sha256` stores the plaintext checksum (computed from the original file bytes before encryption).
+- Non-encrypted payload deduplication is enabled to reduce duplicate disk usage; encrypted uploads do not deduplicate.

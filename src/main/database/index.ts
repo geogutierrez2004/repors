@@ -4,8 +4,9 @@
 import type Database from 'better-sqlite3';
 import { up as initialSchema } from './migrations/001-initial-schema';
 import { up as addFileExtension } from './migrations/002-add-file-extension';
+import { up as addFilePayloadDedup } from './migrations/003-file-payload-dedup';
 
-const migrations = [initialSchema, addFileExtension];
+const migrations = [initialSchema, addFileExtension, addFilePayloadDedup];
 
 export function runMigrations(db: Database.Database): void {
   // Create a migrations tracking table
