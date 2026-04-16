@@ -26,7 +26,7 @@ async function bootstrap(): Promise<void> {
   const dashboardService = new DashboardService(db);
 
   // Seed default admin if no users exist
-  await authService.seedDefaultAdmin('fs_adm1', 'admin123');
+  await authService.seedDefaultAdmin('fs_adm1', 'M0n$p33t101');
 
   // Seed system shelves and default storage quota
   dashboardService.seedSystemShelves();
