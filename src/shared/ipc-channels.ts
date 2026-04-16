@@ -27,6 +27,7 @@ export const IPC_CHANNELS = {
   FILES_UPLOAD: 'sccfs:files:upload',
   FILES_DOWNLOAD: 'sccfs:files:download',
   FILES_VIEW_ENCRYPTED: 'sccfs:files:view-encrypted',
+  FILES_VIEW_ENCRYPTED_CLEANUP: 'sccfs:files:view-encrypted-cleanup',
   FILES_DELETE: 'sccfs:files:delete',
   FILES_MOVE: 'sccfs:files:move',
 

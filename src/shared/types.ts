@@ -109,7 +109,15 @@ export interface FileUploadResult {
 }
 
 export interface SecureTempViewResult {
+  viewId: string;
+  fileName: string;
+  mimeType: string | null;
+  contentBase64: string;
   cleanupAfterMs: number;
+}
+
+export interface SecureTempViewCleanupResult {
+  deleted: boolean;
 }
 
 /** Shelf record with aggregate counts. */

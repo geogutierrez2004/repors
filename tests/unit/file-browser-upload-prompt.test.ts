@@ -1,20 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
-import { requestUploadEncryptionDecision } from '../../src/renderer/pages/FileBrowser';
+import {
+  requestUploadEncryptionDecision,
+  validateEncryptionPasswords,
+} from '../../src/renderer/pages/FileBrowser';
 
 describe('FileBrowser upload encryption prompt', () => {
-  it('asks encryption question before upload decision and returns encrypted choice', () => {
-    const confirmMock = vi.fn().mockReturnValue(true);
-    const decision = requestUploadEncryptionDecision(confirmMock);
+  it('asks encryption question before upload decision and returns yes/no/cancel', () => {
+    const promptMock = vi.fn().mockReturnValue('yes');
+    const decision = requestUploadEncryptionDecision(promptMock);
 
-    expect(confirmMock).toHaveBeenCalledWith('Encrypt this file before uploading?');
-    expect(decision).toBe(true);
+    expect(promptMock).toHaveBeenCalledWith('Encrypt this file before uploading?');
+    expect(decision).toBe('yes');
   });
 
-  it('returns non-encrypted choice when encryption is declined', () => {
-    const confirmMock = vi.fn().mockReturnValue(false);
-    const decision = requestUploadEncryptionDecision(confirmMock);
+  it('validates password entry when encrypt is selected', () => {
+    expect(validateEncryptionPasswords('', '')).toBe('Encryption password is required.');
+    expect(validateEncryptionPasswords('abc', 'xyz')).toBe('Encryption passwords do not match.');
+    expect(validateEncryptionPasswords('same', 'same')).toBeNull();
+  });
 
-    expect(confirmMock).toHaveBeenCalledWith('Encrypt this file before uploading?');
-    expect(decision).toBe(false);
+  it('returns cancel when user aborts upload choice', () => {
+    const promptMock = vi.fn().mockReturnValue('cancel');
+    expect(requestUploadEncryptionDecision(promptMock)).toBe('cancel');
   });
 });

@@ -15,6 +15,7 @@ import type {
   PaginatedResult,
   FileUploadResult,
   SecureTempViewResult,
+  SecureTempViewCleanupResult,
   SourceHandlingMode,
 } from '../shared/types';
 
@@ -62,11 +63,20 @@ declare global {
           sessionId: string,
           shelfId: string,
           encrypt: boolean,
+          encryptionPassword?: string,
           sourceHandlingMode?: SourceHandlingMode,
           confirmPermanentDelete?: boolean,
         ): Promise<IpcResponse<FileUploadResult>>;
-        download(sessionId: string, fileId: string): Promise<IpcResponse<null>>;
-        viewEncrypted(sessionId: string, fileId: string): Promise<IpcResponse<SecureTempViewResult>>;
+        download(sessionId: string, fileId: string, decryptionPassword?: string): Promise<IpcResponse<null>>;
+        viewEncrypted(
+          sessionId: string,
+          fileId: string,
+          decryptionPassword: string,
+        ): Promise<IpcResponse<SecureTempViewResult>>;
+        cleanupEncryptedView(
+          sessionId: string,
+          viewId: string,
+        ): Promise<IpcResponse<SecureTempViewCleanupResult>>;
         delete(sessionId: string, fileId: string): Promise<IpcResponse<null>>;
         move(
           sessionId: string,
