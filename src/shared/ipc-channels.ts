@@ -43,6 +43,7 @@ export const IPC_CHANNELS = {
   STORAGE_SET_QUOTA: 'sccfs:storage:set-quota',
   STORAGE_BACKUP: 'sccfs:storage:backup',
   STORAGE_RESTORE: 'sccfs:storage:restore',
+  APP_RESTORED: 'sccfs:app:restored',
 
   // Session management (security dashboard)
   SESSIONS_LIST: 'sccfs:sessions:list',
@@ -53,4 +54,3 @@ export const IPC_CHANNELS = {
 export const ALLOWED_CHANNELS: readonly string[] = Object.values(IPC_CHANNELS);
 
 export type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];
-

@@ -140,7 +140,7 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
     const res = await window.sccfs.storage.restore(sessionId);
     setRestoreLoading(false);
     if (res.ok) {
-      addToast('success', 'Database restored successfully. Please restart the application.');
+      addToast('success', 'Restore completed. Refreshing application state…');
     } else if (res.error?.code !== 'CANCELLED') {
       addToast('error', res.error?.message ?? 'Restore failed');
     }

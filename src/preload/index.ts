@@ -155,6 +155,18 @@ const api = {
     terminate: (sessionId: string, targetSessionId: string) =>
       safeInvoke(IPC_CHANNELS.SESSIONS_TERMINATE, { sessionId, targetSessionId }),
   },
+
+  app: {
+    onRestored: (callback: (payload: { sessionInvalidated: boolean }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, payload: { sessionInvalidated: boolean }) => {
+        callback(payload);
+      };
+      ipcRenderer.on(IPC_CHANNELS.APP_RESTORED, listener);
+      return () => {
+        ipcRenderer.off(IPC_CHANNELS.APP_RESTORED, listener);
+      };
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld('sccfs', api);

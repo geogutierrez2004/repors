@@ -29,8 +29,6 @@ import type {
   PaginatedResult,
   UserRecord,
 } from '../../shared/types';
-import { getDatabasePath, setDatabase, getDatabase } from '../database/connection';
-import { runMigrations } from '../database';
 import { normalizeExtension, guessExtensionFromMime } from '../utils/file-extension';
 
 // ────────────────────────────────────────
@@ -93,35 +91,20 @@ function countFilesRecursive(dirPath: string): number {
   return count;
 }
 
-function replaceDirectory(targetDir: string, sourceDir: string): void {
-  const parentDir = path.dirname(targetDir);
-  const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  const stagingDir = path.join(parentDir, `.sccfs-stage-${nonce}`);
-  const previousDir = path.join(parentDir, `.sccfs-prev-${nonce}`);
-
-  fs.cpSync(sourceDir, stagingDir, { recursive: true });
-
-  const hadTarget = fs.existsSync(targetDir);
-  if (hadTarget) fs.renameSync(targetDir, previousDir);
-
-  try {
-    fs.renameSync(stagingDir, targetDir);
-    if (hadTarget) fs.rmSync(previousDir, { recursive: true, force: true });
-  } catch (e) {
-    fs.rmSync(stagingDir, { recursive: true, force: true });
-    if (hadTarget && fs.existsSync(previousDir) && !fs.existsSync(targetDir)) {
-      fs.renameSync(previousDir, targetDir);
-    }
-    throw e;
-  }
-}
-
 // ────────────────────────────────────────
 // Dashboard service
 // ────────────────────────────────────────
 
 export class DashboardService {
-  constructor(private db: Database.Database) {}
+  constructor(
+    private db: Database.Database,
+    private readonly restoreExecutor?: (request: {
+      backupDir: string;
+      backupDbPath: string;
+      backupFilesDir: string;
+      actorUserId: string;
+    }) => Promise<void>,
+  ) {}
 
   // ── Seed system shelves ──────────────
 
@@ -763,39 +746,21 @@ export class DashboardService {
       testDb?.close();
     }
 
-    const currentPath = getDatabasePath();
-    if (!currentPath) throw new AuthError('INTERNAL_ERROR', 'Cannot determine database path');
-    const currentFilesDir = getFilesDir();
-
-    // Create a safety backup before overwriting in case restore fails
-    const safetyRoot = fs.mkdtempSync(path.join(getBackupsDir(), 'pre-restore-'));
-    const safetyBackupDb = path.join(safetyRoot, 'sccfs.db');
-    const safetyBackupFiles = path.join(safetyRoot, 'files');
-    this.db.close();
-    fs.copyFileSync(currentPath, safetyBackupDb);
-    fs.cpSync(currentFilesDir, safetyBackupFiles, { recursive: true });
-
-    try {
-      fs.copyFileSync(backupDbPath, currentPath);
-      replaceDirectory(currentFilesDir, backupFilesDir);
-    } catch {
-      // Restore from safety backup on failure
-      fs.copyFileSync(safetyBackupDb, currentPath);
-      replaceDirectory(currentFilesDir, safetyBackupFiles);
-      throw new AuthError('RESTORE_FAILED', 'Failed to overwrite database during restore');
-    } finally {
-      // Always try to clean up the safety backup
-      fs.rm(safetyRoot, { recursive: true, force: true }, () => null);
+    if (!this.restoreExecutor) {
+      throw new AuthError('INTERNAL_ERROR', 'Restore is not configured');
     }
 
-    const newDb = new BetterSqlite3(currentPath);
-    newDb.pragma('journal_mode = WAL');
-    newDb.pragma('foreign_keys = ON');
-    setDatabase(newDb);
-    this.db = newDb;
-    runMigrations(newDb);
+    await this.restoreExecutor({
+      backupDir,
+      backupDbPath,
+      backupFilesDir,
+      actorUserId: session.userId,
+    });
+  }
 
-    this.logActivity(session.userId, 'STORAGE_RESTORE', `Backup restored from ${path.basename(backupDir)}`);
+  /** Log a successful restore operation in the activity log. */
+  logStorageRestoreActivity(userId: string, backupDirName: string): void {
+    this.logActivity(userId, 'STORAGE_RESTORE', `Backup restored from ${backupDirName}`);
   }
 
   // ── Sessions (security dashboard) ────

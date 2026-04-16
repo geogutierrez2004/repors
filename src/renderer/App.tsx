@@ -302,6 +302,27 @@ export function App(): React.JSX.Element {
     if (sessionCheckRef.current) clearInterval(sessionCheckRef.current);
   }, [sessionId]);
 
+  useEffect(() => {
+    const unsubscribe = window.sccfs.app.onRestored(({ sessionInvalidated }) => {
+      if (sessionInvalidated) {
+        setSessionId(null);
+        setUser(null);
+        setPage('dashboard');
+        setShowSessionWarning(false);
+        if (sessionCheckRef.current) clearInterval(sessionCheckRef.current);
+        addToast('info', 'Backup restored. Please log in again.');
+        return;
+      }
+
+      addToast('success', 'Backup restored successfully.');
+      setPage('dashboard');
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [addToast]);
+
   // ── Not logged in ──
   if (!sessionId || !user) {
     return (
