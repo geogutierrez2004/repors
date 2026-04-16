@@ -70,7 +70,7 @@ describe('AuthService', () => {
       expect(result.user.username).toBe('fs_adm1');
     });
 
-    it('should consolidate multiple users into one fs_adm1 account and reassign references', async () => {
+    it('should consolidate multiple users into fs_adm1 and reassign references', async () => {
       await auth.seedDefaultAdmin('legacy_admin', 'Legacy@1234');
       const canonical = db.prepare('SELECT id FROM users LIMIT 1').get() as { id: string };
 

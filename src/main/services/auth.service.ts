@@ -225,7 +225,7 @@ export class AuthService {
     const canonicalUserId = preferredUser.id;
     const extraUserIds = users.filter((u) => u.id !== canonicalUserId).map((u) => u.id);
 
-    const tx = this.db.transaction(() => {
+    const consolidateTransaction = this.db.transaction(() => {
       if (extraUserIds.length > 0) {
         const placeholders = extraUserIds.map(() => '?').join(', ');
 
@@ -257,7 +257,7 @@ export class AuthService {
         .run(username, hash, Role.ADMIN, canonicalUserId);
     });
 
-    tx();
+    consolidateTransaction();
   }
 
   // ── Private helpers ──────────────────
