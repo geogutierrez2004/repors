@@ -21,11 +21,59 @@ A local-first desktop filing application for registrar operations built with Ele
 
 ## Getting Started
 
+### Prerequisites
+- **Node.js 20 LTS** or higher
+- **npm** or **yarn**
+- Windows, macOS, or Linux
+
+### Quick Setup
+
 ```bash
+# 1. Clone the repository
+git clone https://github.com/geogutierrez2004/repors.git
+cd repors
+
+# 2. Install dependencies (postinstall will auto-run electron-rebuild)
 npm install
-npm test          # Run unit + integration tests
-npm run build     # Compile TypeScript
-npm start         # Launch Electron app
+
+# 3. Run tests to verify everything works
+npm test
+
+# 4. Build and start the app
+npm start
+```
+
+### Default Credentials
+
+On first launch, the app automatically creates a default admin account:
+- **Username:** `fs_adm1`
+- **Password:** `M0n$p33t101`
+
+Delete the database file to reset credentials:
+```bash
+# Windows
+Remove-Item $env:APPDATA\sccfs\data\sccfs.db -Force
+
+# macOS/Linux
+rm ~/.config/sccfs/data/sccfs.db
+```
+
+### Troubleshooting
+
+**Native Module Errors?**
+The `postinstall` script automatically rebuilds native modules (`better-sqlite3`, `argon2`) for Electron. If you still encounter errors, manually rebuild:
+```bash
+npm run postinstall
+```
+
+**Tests Failing?**
+Ensure `npm rebuild` completed successfully after `npm install`.
+
+**App Won't Start?**
+Delete the database and rebuild:
+```bash
+npm run postinstall
+npm start
 ```
 
 ## Project Structure
