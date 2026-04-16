@@ -31,6 +31,7 @@ export function up(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS files (
       id            TEXT PRIMARY KEY,
       original_name TEXT NOT NULL,
+      original_extension TEXT,
       stored_name   TEXT NOT NULL,
       mime_type     TEXT,
       size_bytes    INTEGER NOT NULL,

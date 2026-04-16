@@ -78,6 +78,7 @@ export interface SessionInfo {
 export interface FileRecord {
   id: string;
   original_name: string;
+  original_extension: string | null;
   stored_name: string;
   mime_type: string | null;
   size_bytes: number;
@@ -185,4 +186,3 @@ export interface ResetPasswordRequest {
   userId: string;
   newPassword: string;
 }
-
