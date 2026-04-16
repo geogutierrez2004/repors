@@ -6,7 +6,7 @@
  * supports bulk operations.
  */
 import React, { useEffect, useState, useCallback } from 'react';
-import type { FileRecord, ShelfRecord, PaginatedResult } from '../../shared/types';
+import type { FileRecord, ShelfRecord, PaginatedResult, SourceHandlingMode } from '../../shared/types';
 import type { AddToast } from '../App';
 import type { SafeUser } from '../../shared/types';
 import { cardStyle, btnStyle } from '../App';
@@ -114,6 +114,8 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
+  const [encryptUpload, setEncryptUpload] = useState(false);
+  const [sourceHandlingMode, setSourceHandlingMode] = useState<SourceHandlingMode>('keep_original');
   const [moveModal, setMoveModal] = useState<string[] | null>(null);
   const [newShelfName, setNewShelfName] = useState('');
   const [addingShelf, setAddingShelf] = useState(false);
@@ -155,10 +157,32 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       return;
     }
     setUploadLoading(true);
-    const res = await window.sccfs.files.upload(sessionId, selectedShelf, false);
+    let effectiveMode = sourceHandlingMode;
+    if (sourceHandlingMode === 'ask_each_time') {
+      const shouldMove = confirm('Move original files to system storage after successful upload?');
+      effectiveMode = shouldMove ? 'move_to_system' : 'keep_original';
+    }
+
+    const res = await window.sccfs.files.upload(sessionId, selectedShelf, encryptUpload, effectiveMode, false);
     setUploadLoading(false);
     if (res.ok) {
-      addToast('success', `Uploaded "${res.data.original_name}" successfully`);
+      const successes = res.data.files.filter((f) => f.success);
+      const failures = res.data.files.filter((f) => !f.success);
+      const removed = successes.filter((f) => f.removed_original).length;
+      if (successes.length > 0) {
+        addToast(
+          'success',
+          encryptUpload
+            ? `Encrypted upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`
+            : `Standard upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`,
+        );
+      }
+      if (failures.length > 0) {
+        addToast(
+          'error',
+          `${failures.length} file(s) failed: ${failures[0].error?.message ?? 'Upload failed'}`,
+        );
+      }
       loadFiles();
       loadShelves();
     } else if (res.error?.code !== 'CANCELLED') {
@@ -166,11 +190,15 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     }
   };
 
-  const handleDownload = async (fileId: string, name: string) => {
+  const handleDownload = async (fileId: string, name: string, encrypted: boolean) => {
     const res = await window.sccfs.files.download(sessionId, fileId);
     if (res.ok) {
-      addToast('success', `Downloaded "${name}"`);
+      addToast('success', encrypted ? `Decrypted and downloaded "${name}"` : `Downloaded "${name}"`);
     } else if (res.error?.code !== 'CANCELLED') {
+      if (res.error?.code === 'DECRYPTION_FAILED_AUTH_TAG') {
+        addToast('error', 'File failed integrity check or is corrupted.');
+        return;
+      }
       addToast('error', res.error?.message ?? 'Download failed');
     }
   };
@@ -461,6 +489,39 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
           </div>
 
           <div style={{ display: 'flex', gap: 8 }}>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: 12,
+                color: 'var(--text-secondary)',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={encryptUpload}
+                onChange={(e) => setEncryptUpload(e.target.checked)}
+              />
+              Encrypt
+            </label>
+            <select
+              value={sourceHandlingMode}
+              onChange={(e) => setSourceHandlingMode(e.target.value as SourceHandlingMode)}
+              style={{
+                padding: '7px 10px',
+                borderRadius: 6,
+                border: '1px solid var(--border)',
+                background: 'var(--bg-surface)',
+                color: 'var(--text-primary)',
+                fontSize: 12,
+              }}
+              title="Source file handling after upload"
+            >
+              <option value="keep_original">Keep originals</option>
+              <option value="move_to_system">Move originals to system</option>
+              <option value="ask_each_time">Ask each time</option>
+            </select>
             {selectedIds.length > 0 && (
               <>
                 <button
@@ -488,6 +549,19 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             </button>
           </div>
         </div>
+        {sourceHandlingMode !== 'keep_original' && (
+          <div
+            style={{
+              padding: '8px 20px',
+              borderBottom: '1px solid var(--border)',
+              background: 'rgba(245, 158, 11, 0.08)',
+              color: '#b45309',
+              fontSize: 12,
+            }}
+          >
+            Warning: originals are only removed after full per-file success; files are sent to recycle bin/trash by default.
+          </div>
+        )}
 
         {/* Table */}
         <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
@@ -592,7 +666,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                       <td style={tdStyle(120)}>
                         <div style={{ display: 'flex', gap: 4 }}>
                           <button
-                            onClick={() => handleDownload(f.id, f.original_name)}
+                            onClick={() => handleDownload(f.id, f.original_name, !!f.is_encrypted)}
                             style={btnStyle('ghost', true)}
                             title="Download"
                           >

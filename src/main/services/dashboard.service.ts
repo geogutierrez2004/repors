@@ -86,12 +86,7 @@ function computeSha256(filePath: string): string {
 
 async function computeSha256Stream(filePath: string): Promise<string> {
   const hash = crypto.createHash('sha256');
-  await new Promise<void>((resolve, reject) => {
-    const stream = fs.createReadStream(filePath);
-    stream.on('data', (chunk) => hash.update(chunk));
-    stream.on('end', () => resolve());
-    stream.on('error', reject);
-  });
+  await pipeline(fs.createReadStream(filePath), hash);
   return hash.digest('hex');
 }
 
@@ -104,6 +99,13 @@ const PBKDF2_KEY_LEN = 32;
 const PBKDF2_DIGEST = 'sha512';
 const GCM_IV_BYTES = 12;
 const GCM_SALT_BYTES = 16;
+const TEMP_FILE_EXTENSION = '.part';
+
+function extractErrorCode(error: unknown): string {
+  return typeof error === 'object' && error && 'code' in error
+    ? String((error as { code?: unknown }).code ?? '')
+    : '';
+}
 
 function countFilesRecursive(dirPath: string): number {
   if (!fs.existsSync(dirPath)) return 0;
@@ -121,6 +123,8 @@ function countFilesRecursive(dirPath: string): number {
 // ────────────────────────────────────────
 
 export class DashboardService {
+  private encryptionMasterSecret?: Buffer;
+
   constructor(
     private db: Database.Database,
     private readonly restoreExecutor?: (request: {
@@ -154,6 +158,24 @@ export class DashboardService {
       this.db
         .prepare("INSERT INTO storage_config (key, value) VALUES ('quota_bytes', ?)")
         .run(String(getInitialQuotaBytes()));
+    }
+
+    const hasSourceModeDefault = this.db
+      .prepare("SELECT key FROM app_config WHERE key = 'upload_source_mode_default'")
+      .get();
+    if (!hasSourceModeDefault) {
+      this.db
+        .prepare("INSERT INTO app_config (key, value) VALUES ('upload_source_mode_default', 'keep_original')")
+        .run();
+    }
+
+    const hasPermanentDeleteFlag = this.db
+      .prepare("SELECT key FROM app_config WHERE key = 'upload_allow_permanent_delete'")
+      .get();
+    if (!hasPermanentDeleteFlag) {
+      this.db
+        .prepare("INSERT INTO app_config (key, value) VALUES ('upload_allow_permanent_delete', '0')")
+        .run();
     }
   }
 
@@ -296,9 +318,11 @@ export class DashboardService {
   async uploadFile(
     sessionId: string,
     shelfId: string,
-    _encrypt: boolean,
+    encrypt: boolean,
+    sourceHandlingMode: SourceHandlingMode,
+    confirmPermanentDelete: boolean,
     win: BrowserWindow,
-  ): Promise<FileRecord> {
+  ): Promise<FileUploadResult> {
     const session = requireAuth(sessionId);
     requirePermission(session.role, Permission.FILE_UPLOAD);
 
@@ -326,69 +350,168 @@ export class DashboardService {
     }
 
     const filesDir = getFilesDir();
-    let lastUploaded!: FileRecord;
+    const resultItems: FileUploadItemResult[] = [];
+    const mode: SourceHandlingMode = sourceHandlingMode === 'ask_each_time' ? 'keep_original' : sourceHandlingMode;
 
     for (const filePath of filePaths) {
-      const stat = fs.statSync(filePath);
+      const sourceName = path.basename(filePath);
+      const item: FileUploadItemResult = {
+        source_path: filePath,
+        source_name: sourceName,
+        success: false,
+        removed_original: false,
+        mode,
+      };
+      try {
+        const stat = fs.statSync(filePath);
 
-      if (stat.size > STORAGE_CONSTANTS.MAX_FILE_SIZE) {
-        throw new AuthError(
-          'FILE_TOO_LARGE',
-          `File exceeds ${STORAGE_CONSTANTS.MAX_FILE_SIZE / (1024 ** 3)} GB limit: ${path.basename(filePath)}`,
-        );
-      }
+        if (stat.size > STORAGE_CONSTANTS.MAX_FILE_SIZE) {
+          throw new AuthError(
+            'FILE_TOO_LARGE',
+            `File exceeds ${STORAGE_CONSTANTS.MAX_FILE_SIZE / (1024 ** 3)} GB limit: ${sourceName}`,
+          );
+        }
 
-      if (usedRow.total + stat.size > quota) {
-        throw new AuthError('QUOTA_EXCEEDED', 'Storage quota exceeded');
-      }
+        if (usedRow.total + stat.size > quota) {
+          throw new AuthError('QUOTA_EXCEEDED', 'Storage quota exceeded');
+        }
 
-      const sha256 = computeSha256(filePath);
-      const originalName = path.basename(filePath);
-      const ext = path.extname(originalName);
-      const originalExtension = normalizeExtension(ext);
-      const storedName = `${uuidv4()}${ext}`;
-      const destPath = path.join(filesDir, storedName);
+        const sha256 = await computeSha256Stream(filePath);
+        const ext = path.extname(sourceName);
+        const originalExtension = normalizeExtension(ext);
+        const mime = this.guessMime(ext);
+        const fileId = uuidv4();
 
-      fs.copyFileSync(filePath, destPath);
+        let storedName: string;
+        let payloadId: string;
+        let encryptionMeta:
+          | {
+              salt: string;
+              iv: string;
+              authTag: string;
+              iterations: number;
+            }
+          | undefined;
+        let reusedPayload = false;
 
-      const fileId = uuidv4();
-      const mime = this.guessMime(ext);
+        if (!encrypt) {
+          const existingPayload = this.db
+            .prepare(
+              `SELECT id, stored_name
+               FROM file_payloads
+               WHERE sha256 = ? AND size_bytes = ? AND is_encrypted = 0
+               ORDER BY created_at ASC
+               LIMIT 1`,
+            )
+            .get(sha256, stat.size) as { id: string; stored_name: string } | undefined;
 
-      this.db
-        .prepare(
-          `INSERT INTO files (id, original_name, original_extension, stored_name, mime_type, size_bytes, sha256, shelf_id, uploaded_by, is_encrypted)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
-        )
-        .run(
-          fileId,
-          originalName,
-          originalExtension,
-          storedName,
-          mime,
-          stat.size,
-          sha256,
-          shelfId,
+          if (existingPayload && fs.existsSync(path.join(filesDir, existingPayload.stored_name))) {
+            storedName = existingPayload.stored_name;
+            payloadId = existingPayload.id;
+            reusedPayload = true;
+          } else {
+            storedName = `${uuidv4()}${ext}`;
+            payloadId = uuidv4();
+            await copyStream(filePath, path.join(filesDir, storedName));
+          }
+        } else {
+          storedName = `${uuidv4()}${ext}`;
+          payloadId = uuidv4();
+          const iterations = PBKDF2_ITERATIONS;
+          const salt = crypto.randomBytes(GCM_SALT_BYTES);
+          const iv = crypto.randomBytes(GCM_IV_BYTES);
+          const key = this.deriveFileKey(salt, iterations);
+          const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+
+          await pipeline(
+            fs.createReadStream(filePath),
+            cipher,
+            fs.createWriteStream(path.join(filesDir, storedName)),
+          );
+
+          encryptionMeta = {
+            salt: salt.toString('base64'),
+            iv: iv.toString('base64'),
+            authTag: cipher.getAuthTag().toString('base64'),
+            iterations,
+          };
+        }
+
+        const persistTransaction = this.db.transaction(() => {
+          if (reusedPayload) {
+            this.db
+              .prepare("UPDATE file_payloads SET ref_count = ref_count + 1, updated_at = datetime('now') WHERE id = ?")
+              .run(payloadId);
+          } else {
+            this.db
+              .prepare(
+                `INSERT INTO file_payloads (id, stored_name, sha256, size_bytes, is_encrypted, ref_count)
+                 VALUES (?, ?, ?, ?, ?, 1)`,
+              )
+              .run(payloadId, storedName, sha256, stat.size, encrypt ? 1 : 0);
+          }
+
+          this.db
+            .prepare(
+              `INSERT INTO files (id, original_name, original_extension, stored_name, mime_type, size_bytes, sha256, shelf_id, uploaded_by, is_encrypted, payload_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .run(
+              fileId,
+              sourceName,
+              originalExtension,
+              storedName,
+              mime,
+              stat.size,
+              sha256,
+              shelfId,
+              session.userId,
+              encrypt ? 1 : 0,
+              payloadId,
+            );
+
+          if (encrypt && encryptionMeta) {
+            this.db
+              .prepare(
+                `INSERT INTO encryption_keys (id, file_id, salt, iv, auth_tag, iterations)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+              )
+              .run(uuidv4(), fileId, encryptionMeta.salt, encryptionMeta.iv, encryptionMeta.authTag, encryptionMeta.iterations);
+          }
+
+          this.db
+            .prepare(
+              `INSERT INTO upload_history (id, file_id, user_id, status, completed_at)
+               VALUES (?, ?, ?, 'completed', datetime('now'))`,
+            )
+            .run(uuidv4(), fileId, session.userId);
+        });
+        persistTransaction();
+
+        if (mode === 'move_to_system') {
+          item.removed_original = await this.removeOriginalFileSafely(filePath, confirmPermanentDelete);
+        }
+
+        this.logActivity(
           session.userId,
+          'FILE_UPLOAD',
+          encrypt ? `Uploaded encrypted ${sourceName}` : `Uploaded ${sourceName}`,
         );
 
-      const uploadHistoryId = uuidv4();
-      this.db
-        .prepare(
-          `INSERT INTO upload_history (id, file_id, user_id, status, completed_at)
-           VALUES (?, ?, ?, 'completed', datetime('now'))`,
-        )
-        .run(uploadHistoryId, fileId, session.userId);
-
-      this.logActivity(session.userId, 'FILE_UPLOAD', `Uploaded ${path.basename(filePath)}`);
-
-      lastUploaded = this.getFileRecord(fileId);
-      // Update running total
-      usedRow.total += stat.size;
+        item.success = true;
+        item.file = this.getFileRecord(fileId);
+        usedRow.total += stat.size;
+      } catch (e) {
+        if (e instanceof AuthError) {
+          item.error = { code: e.code, message: e.message };
+        } else {
+          item.error = { code: 'UPLOAD_FAILED', message: e instanceof Error ? e.message : 'Upload failed' };
+        }
+      }
+      resultItems.push(item);
     }
 
-    // Returns the last uploaded file record; callers refresh their own file list
-    // to see all newly uploaded files when multiple files were selected.
-    return lastUploaded;
+    return { files: resultItems };
   }
 
   async downloadFile(sessionId: string, fileId: string, win: BrowserWindow): Promise<void> {
@@ -412,7 +535,43 @@ export class DashboardService {
       throw new AuthError('FILE_MISSING', 'File data not found on disk');
     }
 
-    fs.copyFileSync(srcPath, filePath);
+    if (!fileRow.is_encrypted) {
+      await copyStream(srcPath, filePath);
+    } else {
+      const metadata = this.db
+        .prepare('SELECT salt, iv, auth_tag, iterations FROM encryption_keys WHERE file_id = ?')
+        .get(fileId) as
+        | { salt: string; iv: string; auth_tag: string; iterations: number }
+        | undefined;
+
+      if (!metadata || !metadata.salt || !metadata.iv || !metadata.auth_tag || !metadata.iterations) {
+        throw new AuthError('ENCRYPTION_METADATA_MISSING', 'Encryption metadata is missing for this file');
+      }
+
+      const tempOutPath = `${filePath}.${uuidv4()}${TEMP_FILE_EXTENSION}`;
+      try {
+        const salt = Buffer.from(metadata.salt, 'base64');
+        const iv = Buffer.from(metadata.iv, 'base64');
+        const authTag = Buffer.from(metadata.auth_tag, 'base64');
+        const key = this.deriveFileKey(salt, metadata.iterations);
+        const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+        decipher.setAuthTag(authTag);
+
+        await pipeline(fs.createReadStream(srcPath), decipher, fs.createWriteStream(tempOutPath));
+        fs.renameSync(tempOutPath, filePath);
+      } catch (e) {
+        if (fs.existsSync(tempOutPath)) {
+          fs.rmSync(tempOutPath, { force: true });
+        }
+        const errorCode = extractErrorCode(e);
+        const authTagErrorCodes = new Set(['ERR_OSSL_EVP_BAD_DECRYPT']);
+        const message = e instanceof Error ? e.message.toLowerCase() : '';
+        if (authTagErrorCodes.has(errorCode) || message.includes('auth') || message.includes('authenticate')) {
+          throw new AuthError('DECRYPTION_FAILED_AUTH_TAG', 'File failed integrity check or is corrupted.');
+        }
+        throw new AuthError('DECRYPTION_FAILED_IO', 'Failed to decrypt and write file');
+      }
+    }
 
     this.db
       .prepare('INSERT INTO downloads (id, file_id, user_id) VALUES (?, ?, ?)')
@@ -427,22 +586,41 @@ export class DashboardService {
 
     const fileRow = this.db
       .prepare('SELECT * FROM files WHERE id = ?')
-      .get(fileId) as (FileRecord & { stored_name: string }) | undefined;
+      .get(fileId) as (FileRecord & { stored_name: string; payload_id: string | null }) | undefined;
     if (!fileRow) throw new AuthError('NOT_FOUND', 'File not found');
 
-    const storedPath = path.join(getFilesDir(), fileRow.stored_name);
-    if (fs.existsSync(storedPath)) {
-      fs.unlinkSync(storedPath);
-    }
-
     // Clean up dependent records before deleting file
+    let payloadToDeletePath: string | null = null;
     const deleteTransaction = this.db.transaction(() => {
       this.db.prepare('DELETE FROM upload_history WHERE file_id = ?').run(fileId);
       this.db.prepare('DELETE FROM downloads WHERE file_id = ?').run(fileId);
       this.db.prepare('DELETE FROM encryption_keys WHERE file_id = ?').run(fileId);
       this.db.prepare('DELETE FROM files WHERE id = ?').run(fileId);
+
+      if (fileRow.payload_id) {
+        const payload = this.db
+          .prepare('SELECT id, stored_name, ref_count FROM file_payloads WHERE id = ?')
+          .get(fileRow.payload_id) as { id: string; stored_name: string; ref_count: number } | undefined;
+
+        if (payload) {
+          if (payload.ref_count <= 1) {
+            this.db.prepare('DELETE FROM file_payloads WHERE id = ?').run(payload.id);
+            payloadToDeletePath = path.join(getFilesDir(), payload.stored_name);
+          } else {
+            this.db
+              .prepare("UPDATE file_payloads SET ref_count = ref_count - 1, updated_at = datetime('now') WHERE id = ?")
+              .run(payload.id);
+          }
+        }
+      } else {
+        payloadToDeletePath = path.join(getFilesDir(), fileRow.stored_name);
+      }
     });
     deleteTransaction();
+
+    if (payloadToDeletePath && fs.existsSync(payloadToDeletePath)) {
+      fs.unlinkSync(payloadToDeletePath);
+    }
 
     this.logActivity(session.userId, 'FILE_DELETE', `Deleted ${fileRow.original_name}`);
   }
@@ -865,6 +1043,52 @@ export class DashboardService {
     this.db
       .prepare('INSERT INTO activity_log (id, user_id, action, detail) VALUES (?, ?, ?, ?)')
       .run(uuidv4(), userId, action, detail);
+  }
+
+  private getEncryptionMasterSecret(): Buffer {
+    if (this.encryptionMasterSecret) return this.encryptionMasterSecret;
+
+    const row = this.db
+      .prepare("SELECT value FROM app_config WHERE key = 'encryption_master_secret'")
+      .get() as { value: string } | undefined;
+
+    if (row?.value) {
+      this.encryptionMasterSecret = Buffer.from(row.value, 'base64');
+      return this.encryptionMasterSecret;
+    }
+
+    const secret = crypto.randomBytes(PBKDF2_KEY_LEN);
+    this.db
+      .prepare("INSERT INTO app_config (key, value) VALUES ('encryption_master_secret', ?)")
+      .run(secret.toString('base64'));
+    this.encryptionMasterSecret = secret;
+    return secret;
+  }
+
+  private deriveFileKey(salt: Buffer, iterations: number): Buffer {
+    return crypto.pbkdf2Sync(
+      this.getEncryptionMasterSecret(),
+      salt,
+      iterations,
+      PBKDF2_KEY_LEN,
+      PBKDF2_DIGEST,
+    );
+  }
+
+  private async removeOriginalFileSafely(filePath: string, confirmPermanentDelete: boolean): Promise<boolean> {
+    if (!fs.existsSync(filePath)) return false;
+
+    const permanentDeleteAllowed = this.db
+      .prepare("SELECT value FROM app_config WHERE key = 'upload_allow_permanent_delete'")
+      .get() as { value: string } | undefined;
+
+    if (permanentDeleteAllowed?.value === '1' && confirmPermanentDelete) {
+      fs.rmSync(filePath, { force: true });
+      return true;
+    }
+
+    await shell.trashItem(filePath);
+    return true;
   }
 
   private guessMime(ext: string): string {

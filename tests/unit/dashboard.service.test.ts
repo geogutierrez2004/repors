@@ -3,6 +3,7 @@ import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { v4 as uuidv4 } from 'uuid';
 import type { BrowserWindow } from 'electron';
 import { runMigrations } from '../../src/main/database';
@@ -10,15 +11,19 @@ import { DashboardService } from '../../src/main/services/dashboard.service';
 import { AuthService } from '../../src/main/services/auth.service';
 import { clearAllSessions } from '../../src/main/services/session.service';
 
-const { showOpenDialogMock, showSaveDialogMock } = vi.hoisted(() => ({
+const { showOpenDialogMock, showSaveDialogMock, trashItemMock } = vi.hoisted(() => ({
   showOpenDialogMock: vi.fn(),
   showSaveDialogMock: vi.fn(),
+  trashItemMock: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
   dialog: {
     showOpenDialog: showOpenDialogMock,
     showSaveDialog: showSaveDialogMock,
+  },
+  shell: {
+    trashItem: trashItemMock,
   },
   BrowserWindow: class BrowserWindow {},
   app: {
@@ -39,6 +44,8 @@ describe('DashboardService file extension handling', () => {
     clearAllSessions();
     showOpenDialogMock.mockReset();
     showSaveDialogMock.mockReset();
+    trashItemMock.mockReset();
+    trashItemMock.mockResolvedValue(undefined);
 
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sccfs-ext-'));
     process.env['SCCFS_DATA_DIR'] = dataDir;
@@ -71,13 +78,23 @@ describe('DashboardService file extension handling', () => {
 
     showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: [uploadPath] });
 
-    const uploaded = await dashboard.uploadFile(sessionId, shelfId, false, {} as BrowserWindow);
+    const uploaded = await dashboard.uploadFile(
+      sessionId,
+      shelfId,
+      false,
+      'keep_original',
+      false,
+      {} as BrowserWindow,
+    );
+    const uploadedFile = uploaded.files[0]?.file;
+    expect(uploaded.files[0]?.success).toBe(true);
+    expect(uploadedFile).toBeTruthy();
 
-    expect(uploaded.original_extension).toBe('.txt');
+    expect(uploadedFile?.original_extension).toBe('.txt');
 
     const row = db
       .prepare('SELECT original_name, original_extension FROM files WHERE id = ?')
-      .get(uploaded.id) as { original_name: string; original_extension: string | null };
+      .get(uploadedFile?.id) as { original_name: string; original_extension: string | null };
     expect(row.original_name).toBe('incoming.txt');
     expect(row.original_extension).toBe('.txt');
   });
@@ -155,5 +172,99 @@ describe('DashboardService file extension handling', () => {
     await dashboard.downloadFile(sessionId, fileId, {} as BrowserWindow);
 
     expect(fs.readFileSync(downloadPath, 'utf-8')).toBe('keep extension');
+  });
+
+  it('encrypted upload then download returns original bytes', async () => {
+    const uploadPath = path.join(dataDir, 'secure.bin');
+    const originalBytes = crypto.randomBytes(2048);
+    fs.writeFileSync(uploadPath, originalBytes);
+
+    showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: [uploadPath] });
+
+    const uploadRes = await dashboard.uploadFile(
+      sessionId,
+      shelfId,
+      true,
+      'keep_original',
+      false,
+      {} as BrowserWindow,
+    );
+    expect(uploadRes.files[0]?.success).toBe(true);
+    const fileId = uploadRes.files[0]?.file?.id;
+    expect(fileId).toBeTruthy();
+
+    const fileRow = db
+      .prepare('SELECT is_encrypted FROM files WHERE id = ?')
+      .get(fileId) as { is_encrypted: number };
+    expect(fileRow.is_encrypted).toBe(1);
+
+    const keyRow = db
+      .prepare('SELECT salt, iv, auth_tag, iterations FROM encryption_keys WHERE file_id = ?')
+      .get(fileId) as { salt: string; iv: string; auth_tag: string; iterations: number } | undefined;
+    expect(keyRow).toBeTruthy();
+    expect(keyRow?.iterations).toBeGreaterThanOrEqual(600_000);
+
+    const downloadPath = path.join(dataDir, 'secure-downloaded.bin');
+    showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: downloadPath });
+
+    await dashboard.downloadFile(sessionId, fileId as string, {} as BrowserWindow);
+    expect(fs.readFileSync(downloadPath)).toEqual(originalBytes);
+  });
+
+  it('tampered encrypted file fails auth-tag validation and leaves no plaintext output', async () => {
+    const uploadPath = path.join(dataDir, 'tamper.bin');
+    fs.writeFileSync(uploadPath, crypto.randomBytes(1024));
+    showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: [uploadPath] });
+
+    const uploadRes = await dashboard.uploadFile(
+      sessionId,
+      shelfId,
+      true,
+      'keep_original',
+      false,
+      {} as BrowserWindow,
+    );
+    const file = uploadRes.files[0]?.file;
+    expect(file).toBeTruthy();
+
+    const storedPath = path.join(dataDir, 'files', file!.stored_name);
+    const encryptedBytes = fs.readFileSync(storedPath);
+    encryptedBytes[0] = encryptedBytes[0] ^ 0xff;
+    fs.writeFileSync(storedPath, encryptedBytes);
+
+    const downloadPath = path.join(dataDir, 'tamper-out.bin');
+    showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: downloadPath });
+
+    await expect(dashboard.downloadFile(sessionId, file!.id, {} as BrowserWindow)).rejects.toMatchObject({
+      code: 'DECRYPTION_FAILED_AUTH_TAG',
+    });
+    expect(fs.existsSync(downloadPath)).toBe(false);
+    const tempParts = fs.readdirSync(dataDir).filter((name) => name.includes('tamper-out.bin') && name.endsWith('.part'));
+    expect(tempParts).toHaveLength(0);
+  });
+
+  it('missing encryption metadata fails cleanly for encrypted file', async () => {
+    const uploadPath = path.join(dataDir, 'missing-meta.bin');
+    fs.writeFileSync(uploadPath, crypto.randomBytes(256));
+    showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: [uploadPath] });
+
+    const uploadRes = await dashboard.uploadFile(
+      sessionId,
+      shelfId,
+      true,
+      'keep_original',
+      false,
+      {} as BrowserWindow,
+    );
+    const fileId = uploadRes.files[0]?.file?.id as string;
+    db.prepare('DELETE FROM encryption_keys WHERE file_id = ?').run(fileId);
+
+    const downloadPath = path.join(dataDir, 'missing-meta-out.bin');
+    showSaveDialogMock.mockResolvedValue({ canceled: false, filePath: downloadPath });
+
+    await expect(dashboard.downloadFile(sessionId, fileId, {} as BrowserWindow)).rejects.toMatchObject({
+      code: 'ENCRYPTION_METADATA_MISSING',
+    });
+    expect(fs.existsSync(downloadPath)).toBe(false);
   });
 });
