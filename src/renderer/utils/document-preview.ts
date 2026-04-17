@@ -1,5 +1,5 @@
 import mammoth from 'mammoth';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 
 export type PreviewKind = 'pdf' | 'image' | 'text' | 'audio' | 'video' | 'docx' | 'xlsx' | 'fallback';
 
@@ -126,39 +126,31 @@ export async function convertDocxBase64ToHtml(contentBase64: string): Promise<st
 
 export async function convertXlsxBase64ToHtml(contentBase64: string): Promise<string> {
   const bytes = decodeBase64ToBytes(contentBase64);
-  const workbook = XLSX.read(bytes, {
-    type: 'array',
-    dense: true,
-    cellFormula: false,
-    cellHTML: false,
-    cellNF: false,
-    cellStyles: false,
-    sheetStubs: false,
-  });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(toArrayBuffer(bytes));
 
-  if (workbook.SheetNames.length === 0) {
+  if (workbook.worksheets.length === 0) {
     return '<p>No worksheets found in this workbook.</p>';
   }
 
-  const sections = workbook.SheetNames.map((sheetName) => {
-    const sheet = workbook.Sheets[sheetName];
-    if (!sheet) {
-      return `<section><h4>${escapeHtml(sheetName)}</h4><p>Worksheet data unavailable.</p></section>`;
+  const sections = workbook.worksheets.map((worksheet) => {
+    const sheetName = worksheet.name || 'Sheet';
+    const rows: string[] = [];
+    if (worksheet.rowCount === 0) {
+      rows.push('<tr><td></td></tr>');
+    } else {
+      for (let rowIndex = 1; rowIndex <= worksheet.rowCount; rowIndex += 1) {
+        const row = worksheet.getRow(rowIndex);
+        const cellCount = Math.max(row.cellCount, 1);
+        const cells: string[] = [];
+        for (let cellIndex = 1; cellIndex <= cellCount; cellIndex += 1) {
+          const cell = row.getCell(cellIndex);
+          cells.push(`<td>${escapeHtml(cell.text)}</td>`);
+        }
+        rows.push(`<tr>${cells.join('')}</tr>`);
+      }
     }
-    const rows = XLSX.utils.sheet_to_json<(string | number | boolean | null)[]>(sheet, {
-      header: 1,
-      raw: false,
-      defval: '',
-      blankrows: true,
-    });
-
-    const bodyRows = rows.length > 0
-      ? rows
-        .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`)
-        .join('')
-      : '<tr><td></td></tr>';
-
-    return `<section><h4>${escapeHtml(sheetName)}</h4><table><tbody>${bodyRows}</tbody></table></section>`;
+    return `<section><h4>${escapeHtml(sheetName)}</h4><table><tbody>${rows.join('')}</tbody></table></section>`;
   }).join('');
 
   return sections;

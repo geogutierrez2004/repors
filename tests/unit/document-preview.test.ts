@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import mammoth from 'mammoth';
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import {
   inferMimeFromFileName,
   getPreviewKind,
@@ -45,14 +45,14 @@ describe('document preview utilities', () => {
   });
 
   it('converts XLSX base64 to HTML tables', async () => {
-    const workbook = XLSX.utils.book_new();
-    const sheet = XLSX.utils.aoa_to_sheet([
-      ['Student', 'Score'],
-      ['Ana', 95],
-    ]);
-    XLSX.utils.book_append_sheet(workbook, sheet, 'Grades');
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Grades');
+    sheet.addRow(['Student', 'Score']);
+    sheet.addRow(['Ana', 95]);
 
-    const base64 = (XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer).toString('base64');
+    const workbookBuffer = await workbook.xlsx.writeBuffer();
+    const bytes = workbookBuffer instanceof ArrayBuffer ? new Uint8Array(workbookBuffer) : workbookBuffer;
+    const base64 = Buffer.from(bytes).toString('base64');
     const html = await convertXlsxBase64ToHtml(base64);
 
     expect(html).toContain('<table>');
