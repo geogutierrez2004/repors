@@ -6,6 +6,7 @@
  * supports bulk operations.
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import type { FileRecord, ShelfRecord, PaginatedResult, SourceHandlingMode } from '../../shared/types';
 import type { AddToast } from '../App';
 import type { SafeUser } from '../../shared/types';
@@ -36,13 +37,62 @@ export function validateEncryptionPasswords(password: string, confirmPassword: s
 
 type PreviewKind = 'pdf' | 'image' | 'text' | 'audio' | 'video' | 'fallback';
 
+function inferMimeFromFileName(fileName: string): string | null {
+  const lowerName = fileName.toLowerCase();
+  if (lowerName.endsWith('.pdf')) return 'application/pdf';
+  if (lowerName.endsWith('.png')) return 'image/png';
+  if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) return 'image/jpeg';
+  if (lowerName.endsWith('.gif')) return 'image/gif';
+  if (lowerName.endsWith('.webp')) return 'image/webp';
+  if (lowerName.endsWith('.bmp')) return 'image/bmp';
+  if (lowerName.endsWith('.svg')) return 'image/svg+xml';
+  if (lowerName.endsWith('.mp3')) return 'audio/mpeg';
+  if (lowerName.endsWith('.wav')) return 'audio/wav';
+  if (lowerName.endsWith('.ogg')) return 'audio/ogg';
+  if (lowerName.endsWith('.m4a')) return 'audio/mp4';
+  if (lowerName.endsWith('.mp4')) return 'video/mp4';
+  if (lowerName.endsWith('.webm')) return 'video/webm';
+  if (lowerName.endsWith('.mov')) return 'video/quicktime';
+  if (lowerName.endsWith('.txt')) return 'text/plain';
+  if (lowerName.endsWith('.md')) return 'text/markdown';
+  if (lowerName.endsWith('.csv')) return 'text/csv';
+  if (lowerName.endsWith('.json')) return 'application/json';
+  return null;
+}
+
 function getPreviewKind(mimeType: string | null, fileName: string): PreviewKind {
-  const mime = (mimeType ?? '').toLowerCase();
+  const mime = (mimeType ?? inferMimeFromFileName(fileName) ?? '').toLowerCase();
   const lowerName = fileName.toLowerCase();
   if (mime === 'application/pdf' || lowerName.endsWith('.pdf')) return 'pdf';
-  if (mime.startsWith('image/')) return 'image';
-  if (mime.startsWith('audio/')) return 'audio';
-  if (mime.startsWith('video/')) return 'video';
+  if (
+    mime.startsWith('image/')
+    || lowerName.endsWith('.png')
+    || lowerName.endsWith('.jpg')
+    || lowerName.endsWith('.jpeg')
+    || lowerName.endsWith('.gif')
+    || lowerName.endsWith('.webp')
+    || lowerName.endsWith('.bmp')
+    || lowerName.endsWith('.svg')
+  ) {
+    return 'image';
+  }
+  if (
+    mime.startsWith('audio/')
+    || lowerName.endsWith('.mp3')
+    || lowerName.endsWith('.wav')
+    || lowerName.endsWith('.ogg')
+    || lowerName.endsWith('.m4a')
+  ) {
+    return 'audio';
+  }
+  if (
+    mime.startsWith('video/')
+    || lowerName.endsWith('.mp4')
+    || lowerName.endsWith('.webm')
+    || lowerName.endsWith('.mov')
+  ) {
+    return 'video';
+  }
   if (
     mime.startsWith('text/')
     || lowerName.endsWith('.txt')
@@ -141,7 +191,7 @@ function MoveModal({
 }
 
 function OverlayModal({ children }: { children: React.ReactNode }) {
-  return (
+  const modal = (
     <div
       style={{
         position: 'fixed',
@@ -153,9 +203,17 @@ function OverlayModal({ children }: { children: React.ReactNode }) {
         zIndex: 1100,
       }}
     >
-      <div style={{ ...cardStyle(), width: 460, maxWidth: '92vw' }}>{children}</div>
+      <div
+        style={{ ...cardStyle(), width: 460, maxWidth: '92vw' }}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
     </div>
   );
+
+  return createPortal(modal, document.body);
 }
 
 // ────────────────────────────────────────
@@ -165,6 +223,9 @@ function OverlayModal({ children }: { children: React.ReactNode }) {
 export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Element {
   const isAdmin = user.role === 'admin';
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const uploadPasswordRef = useRef<HTMLInputElement | null>(null);
+  const uploadPasswordConfirmRef = useRef<HTMLInputElement | null>(null);
+  const decryptionPasswordRef = useRef<HTMLInputElement | null>(null);
 
   const [shelves, setShelves] = useState<ShelfRecord[]>([]);
   const [files, setFiles] = useState<PaginatedResult<FileRecord>>({
@@ -187,8 +248,6 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const [showUploadEncryptModal, setShowUploadEncryptModal] = useState(false);
   const [showUploadPasswordModal, setShowUploadPasswordModal] = useState(false);
   const [pendingUploadMode, setPendingUploadMode] = useState<SourceHandlingMode>('keep_original');
-  const [uploadPassword, setUploadPassword] = useState('');
-  const [uploadPasswordConfirm, setUploadPasswordConfirm] = useState('');
   const [uploadPasswordError, setUploadPasswordError] = useState<string | null>(null);
   const [decryptPrompt, setDecryptPrompt] = useState<{ fileId: string; name: string; mode: 'download' | 'view' } | null>(null);
   const [decryptionPassword, setDecryptionPassword] = useState('');
@@ -238,7 +297,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   );
   const viewerDataUrl = useMemo(() => {
     if (!viewer) return '';
-    const mime = viewer.mimeType ?? 'application/octet-stream';
+    const mime = viewer.mimeType ?? inferMimeFromFileName(viewer.fileName) ?? 'application/octet-stream';
     return `data:${mime};base64,${viewer.contentBase64}`;
   }, [viewer]);
   const viewerTextContent = useMemo(() => {
@@ -272,6 +331,26 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       cancelled = true;
     };
   }, [viewer, previewKind, addToast]);
+
+  useEffect(() => {
+    if (!showUploadPasswordModal) return;
+    const timer = window.setTimeout(() => {
+      uploadPasswordRef.current?.focus();
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [showUploadPasswordModal]);
+
+  useEffect(() => {
+    if (!decryptPrompt) return;
+    const timer = window.setTimeout(() => {
+      decryptionPasswordRef.current?.focus();
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [decryptPrompt]);
 
   const performUpload = async (encrypt: boolean, encryptionPassword?: string) => {
     if (!selectedShelf) return;
@@ -364,22 +443,24 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       await performUpload(false);
       return;
     }
-    setUploadPassword('');
-    setUploadPasswordConfirm('');
+    if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
+    if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
     setUploadPasswordError(null);
     setShowUploadPasswordModal(true);
   };
 
   const handleSubmitUploadPassword = async () => {
-    const validation = validateEncryptionPasswords(uploadPassword, uploadPasswordConfirm);
+    const password = uploadPasswordRef.current?.value ?? '';
+    const confirmPassword = uploadPasswordConfirmRef.current?.value ?? '';
+    const validation = validateEncryptionPasswords(password, confirmPassword);
     if (validation) {
       setUploadPasswordError(validation);
       return;
     }
     setShowUploadPasswordModal(false);
-    await performUpload(true, uploadPassword);
-    setUploadPassword('');
-    setUploadPasswordConfirm('');
+    await performUpload(true, password);
+    if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
+    if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
     setUploadPasswordError(null);
   };
 
@@ -983,26 +1064,44 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             Enter and confirm the password used to encrypt this upload.
           </p>
           <input
+            ref={uploadPasswordRef}
             type="password"
             autoFocus
-            value={uploadPassword}
-            onChange={(e) => { setUploadPassword(e.target.value); setUploadPasswordError(null); }}
+            onChange={() => { setUploadPasswordError(null); }}
             placeholder="Encryption password"
             style={modalInputStyle}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void handleSubmitUploadPassword();
+              }
+            }}
           />
           <input
+            ref={uploadPasswordConfirmRef}
             type="password"
-            value={uploadPasswordConfirm}
-            onChange={(e) => { setUploadPasswordConfirm(e.target.value); setUploadPasswordError(null); }}
+            onChange={() => { setUploadPasswordError(null); }}
             placeholder="Confirm password"
             style={{ ...modalInputStyle, marginTop: 8 }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void handleSubmitUploadPassword();
+              }
+            }}
           />
           {uploadPasswordError && (
             <div style={{ marginTop: 8, color: 'var(--danger)', fontSize: 12 }}>{uploadPasswordError}</div>
           )}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
             <button
-              onClick={() => { setShowUploadPasswordModal(false); addToast('info', 'Upload cancelled before processing.'); }}
+              onClick={() => {
+                setShowUploadPasswordModal(false);
+                if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
+                if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
+                setUploadPasswordError(null);
+                addToast('info', 'Upload cancelled before processing.');
+              }}
               style={btnStyle('secondary', true)}
             >
               Cancel
@@ -1022,6 +1121,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             Enter the encryption password for "{decryptPrompt.name}".
           </p>
           <input
+            ref={decryptionPasswordRef}
             type="password"
             autoFocus
             value={decryptionPassword}

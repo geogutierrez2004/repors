@@ -126,6 +126,14 @@ function makeTempPartPath(basePath: string): string {
   return `${basePath}${TEMP_PART_EXTENSION}.${uuidv4()}`;
 }
 
+function sanitizeFileName(name: string): string {
+  const baseName = name.split(/[\\/]/).pop()?.trim() ?? '';
+  const sanitized = baseName
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/[. ]+$/g, '');
+  return sanitized || 'unnamed-file';
+}
+
 // ────────────────────────────────────────
 // Dashboard service
 // ────────────────────────────────────────
@@ -1403,9 +1411,10 @@ export class DashboardService {
     stored_name: string;
     mime_type: string | null;
   }): string {
-    const originalNameExtension = normalizeExtension(path.extname(file.original_name));
+    const safeOriginalName = sanitizeFileName(file.original_name);
+    const originalNameExtension = normalizeExtension(path.extname(safeOriginalName));
     if (originalNameExtension) {
-      return file.original_name;
+      return safeOriginalName;
     }
 
     const extension =
@@ -1413,6 +1422,6 @@ export class DashboardService {
       normalizeExtension(path.extname(file.stored_name)) ??
       guessExtensionFromMime(file.mime_type);
 
-    return extension ? `${file.original_name}${extension}` : file.original_name;
+    return extension ? `${safeOriginalName}${extension}` : safeOriginalName;
   }
 }

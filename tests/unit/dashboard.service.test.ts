@@ -350,6 +350,32 @@ describe('DashboardService file extension handling', () => {
     }
   });
 
+  it('encrypted secure view works for restored records with path-like original names', async () => {
+    const uploadPath = path.join(dataDir, 'restored-secure-view.bin');
+    const originalBytes = crypto.randomBytes(1024);
+    fs.writeFileSync(uploadPath, originalBytes);
+    showOpenDialogMock.mockResolvedValue({ canceled: false, filePaths: [uploadPath] });
+
+    const uploadRes = await dashboard.uploadFile(
+      sessionId,
+      shelfId,
+      true,
+      ENCRYPTION_PASSWORD,
+      'keep_original',
+      false,
+      {} as BrowserWindow,
+    );
+    const file = uploadRes.files[0]?.file;
+    expect(file).toBeTruthy();
+
+    db.prepare('UPDATE files SET original_name = ?, original_extension = ? WHERE id = ?')
+      .run('legacy/folder/restored-secret', '.txt', file!.id);
+
+    const viewResult = await dashboard.viewEncryptedFile(sessionId, file!.id, ENCRYPTION_PASSWORD);
+    expect(viewResult.fileName).toBe('restored-secret.txt');
+    expect(Buffer.from(viewResult.contentBase64, 'base64')).toEqual(originalBytes);
+  });
+
   it('tampered encrypted file fails secure view integrity check without leaving plaintext temp output', async () => {
     vi.useFakeTimers();
     try {
