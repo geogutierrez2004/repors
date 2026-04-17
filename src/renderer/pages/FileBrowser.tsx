@@ -226,6 +226,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     () => (viewer ? getPreviewKind(viewer.mimeType, viewer.fileName) : 'fallback'),
     [viewer],
   );
+  const conversionSettled = isConvertedKind(previewKind) && !conversionLoading && !conversionError;
   const viewerDataUrl = useMemo(() => {
     if (!viewer) return '';
     const mime = viewer.mimeType ?? inferMimeFromFileName(viewer.fileName) ?? 'application/octet-stream';
@@ -234,7 +235,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const viewerTextContent = useMemo(() => {
     if (!viewer || previewKind !== 'text') return '';
     return new TextDecoder().decode(decodeBase64ToBytes(viewer.contentBase64));
-  }, [viewer?.contentBase64, previewKind]);
+  }, [viewer?.contentBase64, previewKind, viewer]);
   useEffect(() => {
     if (!viewer || !isConvertedKind(previewKind)) {
       setConvertedHtml(null);
@@ -1124,8 +1125,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
         </OverlayModal>
       )}
       {viewer && (
-        <OverlayModal>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+        <OverlayModal>          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
             <h3 style={{ margin: 0 }}>Secure In-App Viewer</h3>
             <button onClick={() => void closeViewer()} style={btnStyle('secondary', true)}>Close</button>
           </div>
@@ -1144,18 +1144,18 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                 {conversionError}
               </div>
             )}
-            {isConvertedKind(previewKind) && !conversionLoading && !conversionError && convertedHtml && (
+            {conversionSettled && convertedHtml && (
               <div
                 style={{ fontSize: 13, color: 'var(--text-primary)' }}
                 dangerouslySetInnerHTML={{ __html: convertedHtml }}
               />
             )}
-            {isConvertedKind(previewKind) && !conversionLoading && !conversionError && !convertedHtml && (
+            {conversionSettled && !convertedHtml && (
               <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
                 This file type is not supported for in-app preview. Please use Download to access the file.
               </div>
             )}
-            {previewKind === 'fallback' && (
+            {(previewKind === 'fallback') && (
               <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
                 This file type is not supported for in-app preview. Please use Download to access the file.
               </div>

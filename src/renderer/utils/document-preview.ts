@@ -182,6 +182,8 @@ export async function convertXlsxBase64ToHtml(contentBase64: string): Promise<st
  * read-excel-file targets the XLSX Open XML format; it will throw for true binary
  * Excel 97–2003 (.xls) workbooks.  Callers catch the error and show a clear
  * fallback message.
+ * Delegates to convertXlsxBase64ToHtml since the underlying parser handles
+ * both formats via the same code path.
  */
 export async function convertXlsBase64ToHtml(contentBase64: string): Promise<string> {
   return convertXlsxBase64ToHtml(contentBase64);
