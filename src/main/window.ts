@@ -10,6 +10,8 @@ export function createMainWindow(): BrowserWindow {
     height: 800,
     minWidth: 800,
     minHeight: 600,
+    fullscreen: true,
+    show: false,
     title: 'St. Clare College Filing System',
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'index.js'),
@@ -22,6 +24,9 @@ export function createMainWindow(): BrowserWindow {
     },
   });
 
+  // Hide native menu
+  win.removeMenu();
+
   // In development, load from dev server; in production, load bundled HTML
   const isDev = process.env['NODE_ENV'] === 'development';
   if (isDev) {
@@ -30,6 +35,11 @@ export function createMainWindow(): BrowserWindow {
   } else {
     void win.loadFile(path.join(__dirname, '..', '..', 'renderer', 'renderer', 'index.html'));
   }
+
+  // Show window after content is loaded
+  win.once('ready-to-show', () => {
+    win.show();
+  });
 
   return win;
 }
