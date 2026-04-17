@@ -1,0 +1,76 @@
+flowchart TB
+  subgraph EXT[" External Entities "]
+    U["👤 Users"]
+    SM["📊 Backup System"]
+  end
+  
+  subgraph CORE[" Core Processes "]
+    P1["P1.0 Authentication<br/>& Session Mgmt"]
+    P2["P2.0 File Upload<br/>& Encryption"]
+    P3["P3.0 File Organization<br/>& Shelves"]
+    P4["P4.0 File Download<br/>& Decryption"]
+    P5["P5.0 Temporary<br/>Secure View"]
+    P6["P6.0 RBAC & Access<br/>Control"]
+    P7["P7.0 Backup<br/>& Restore"]
+  end
+  
+  subgraph DATA[" Data Stores "]
+    D1[("D1: User<br/>& Session")]
+    D2[("D2: File<br/>Metadata")]
+    D3[("D3: Encrypted<br/>Payloads")]
+    D4[("D4: Shelves<br/>& Org")]
+    D5[("D5: Encryption<br/>Keys & Salt")]
+    D6[("D6: Activity<br/>Log")]
+    D7[("D7: Quota<br/>Config")]
+    D8[("D8: Temp<br/>Files")]
+  end
+  
+  U -->|1. Login| P1
+  P1 -->|2. Auth Result| U
+  P1 <--> D1
+  P1 --> D6
+  
+  U -->|3. Upload| P2
+  P2 <--> D2
+  P2 <--> D3
+  P2 <--> D5
+  P2 --> D6
+  
+  U -->|4. Organize| P3
+  P3 <--> D4
+  P3 --> D6
+  
+  U -->|5. Download| P4
+  P4 <--> D2
+  P4 <--> D3
+  P4 <--> D5
+  P4 -->|6. File| U
+  P4 --> D6
+  
+  U -->|7. Preview| P5
+  P5 <--> D3
+  P5 <--> D5
+  P5 <--> D8
+  P5 -->|Temp URL| U
+  P5 --> D6
+  
+  P1 -.->|Check RBAC| P6
+  P2 -.->|Check RBAC| P6
+  P6 <--> D1
+  
+  SM -->|8. Backup| P7
+  P7 --> D1
+  P7 --> D2
+  P7 --> D3
+  P7 -->|Archive| SM
+  P7 --> D6
+  
+  SM -->|9. Restore| P7
+  
+  classDef process fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
+  classDef datastore fill:#e0f2f1,stroke:#00695c,stroke-width:2px,color:#000
+  classDef external fill:#e1f5ff,stroke:#01579b,stroke-width:2px,color:#000
+  
+  class P1,P2,P3,P4,P5,P6,P7 process
+  class D1,D2,D3,D4,D5,D6,D7,D8 datastore
+  class U,SM external
