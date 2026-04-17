@@ -1,7 +1,15 @@
 import mammoth from 'mammoth';
 import readXlsxFile from 'read-excel-file/universal';
 
-export type PreviewKind = 'pdf' | 'image' | 'text' | 'audio' | 'video' | 'docx' | 'xlsx' | 'fallback';
+export type PreviewKind = 'pdf' | 'image' | 'text' | 'audio' | 'video' | 'docx' | 'xlsx' | 'doc' | 'xls' | 'fallback';
+
+/**
+ * Returns true for any preview kind that goes through the HTML conversion pipeline
+ * (mammoth or read-excel-file) rather than native browser rendering.
+ */
+export function isConvertedKind(kind: PreviewKind): boolean {
+  return kind === 'docx' || kind === 'doc' || kind === 'xlsx' || kind === 'xls';
+}
 
 export function inferMimeFromFileName(fileName: string): string | null {
   const lowerName = fileName.toLowerCase();
@@ -25,6 +33,10 @@ export function inferMimeFromFileName(fileName: string): string | null {
   if (lowerName.endsWith('.json')) return 'application/json';
   if (lowerName.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
   if (lowerName.endsWith('.xlsx')) return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  if (lowerName.endsWith('.doc')) return 'application/msword';
+  if (lowerName.endsWith('.xls')) return 'application/vnd.ms-excel';
+  if (lowerName.endsWith('.ppt')) return 'application/vnd.ms-powerpoint';
+  if (lowerName.endsWith('.pptx')) return 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
   return null;
 }
 
@@ -42,6 +54,12 @@ export function getPreviewKind(mimeType: string | null, fileName: string): Previ
     || lowerName.endsWith('.xlsx')
   ) {
     return 'xlsx';
+  }
+  if (mime === 'application/msword' || lowerName.endsWith('.doc')) {
+    return 'doc';
+  }
+  if (mime === 'application/vnd.ms-excel' || lowerName.endsWith('.xls')) {
+    return 'xls';
   }
   if (mime === 'application/pdf' || lowerName.endsWith('.pdf')) return 'pdf';
   if (
@@ -121,6 +139,22 @@ export async function convertDocxBase64ToHtml(contentBase64: string): Promise<st
   return result.value ?? '';
 }
 
+/**
+ * Attempt to convert a legacy .doc file using mammoth.
+ * Works for XML-based .doc files (e.g. Word 2003 XML or .docx renamed to .doc).
+ * Throws for true binary Word 97–2003 documents; callers show a clear fallback message.
+ */
+export async function convertDocBase64ToHtml(contentBase64: string): Promise<string> {
+  const bytes = decodeBase64ToBytes(contentBase64);
+  const result = await mammoth.convertToHtml({ arrayBuffer: toArrayBuffer(bytes) });
+  const errors = result.messages?.filter((message) => message.type === 'error') ?? [];
+  if (errors.length > 0) {
+    const details = errors.map((message) => message.message).join('; ');
+    throw new Error(details ? `DOC conversion failed: ${details}` : 'DOC conversion failed');
+  }
+  return result.value ?? '';
+}
+
 export async function convertXlsxBase64ToHtml(contentBase64: string): Promise<string> {
   const bytes = decodeBase64ToBytes(contentBase64);
   const arrayBuffer = toArrayBuffer(bytes);
@@ -143,12 +177,28 @@ export async function convertXlsxBase64ToHtml(contentBase64: string): Promise<st
   return sectionList.join('');
 }
 
+/**
+ * Attempt to convert a legacy .xls file using read-excel-file.
+ * read-excel-file targets the XLSX Open XML format; it will throw for true binary
+ * Excel 97–2003 (.xls) workbooks.  Callers catch the error and show a clear
+ * fallback message.
+ */
+export async function convertXlsBase64ToHtml(contentBase64: string): Promise<string> {
+  return convertXlsxBase64ToHtml(contentBase64);
+}
+
 export async function convertPreviewToHtml(previewKind: PreviewKind, contentBase64: string): Promise<string | null> {
   if (previewKind === 'docx') {
     return convertDocxBase64ToHtml(contentBase64);
   }
+  if (previewKind === 'doc') {
+    return convertDocBase64ToHtml(contentBase64);
+  }
   if (previewKind === 'xlsx') {
     return convertXlsxBase64ToHtml(contentBase64);
+  }
+  if (previewKind === 'xls') {
+    return convertXlsBase64ToHtml(contentBase64);
   }
   return null;
 }

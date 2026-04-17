@@ -18,6 +18,7 @@ import {
   getPreviewKind,
   decodeBase64ToBytes,
   convertPreviewToHtml,
+  isConvertedKind,
 } from '../utils/document-preview';
 
 interface Props {
@@ -235,7 +236,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     return new TextDecoder().decode(decodeBase64ToBytes(viewer.contentBase64));
   }, [viewer?.contentBase64, previewKind]);
   useEffect(() => {
-    if (!viewer || (previewKind !== 'docx' && previewKind !== 'xlsx')) {
+    if (!viewer || !isConvertedKind(previewKind)) {
       setConvertedHtml(null);
       setConversionLoading(false);
       setConversionError(null);
@@ -1135,21 +1136,21 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             {previewKind === 'text' && <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{viewerTextContent}</pre>}
             {previewKind === 'audio' && <audio controls src={viewerDataUrl} style={{ width: '100%' }} />}
             {previewKind === 'video' && <video controls src={viewerDataUrl} style={{ width: '100%', maxHeight: '65vh' }} />}
-            {(previewKind === 'docx' || previewKind === 'xlsx') && conversionLoading && (
+            {isConvertedKind(previewKind) && conversionLoading && (
               <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Converting document...</div>
             )}
-            {(previewKind === 'docx' || previewKind === 'xlsx') && conversionError && (
+            {isConvertedKind(previewKind) && conversionError && (
               <div style={{ color: 'var(--danger)', fontSize: 13 }}>
                 {conversionError}
               </div>
             )}
-            {(previewKind === 'docx' || previewKind === 'xlsx') && !conversionLoading && !conversionError && convertedHtml && (
+            {isConvertedKind(previewKind) && !conversionLoading && !conversionError && convertedHtml && (
               <div
                 style={{ fontSize: 13, color: 'var(--text-primary)' }}
                 dangerouslySetInnerHTML={{ __html: convertedHtml }}
               />
             )}
-            {(previewKind === 'docx' || previewKind === 'xlsx') && !conversionLoading && !conversionError && !convertedHtml && (
+            {isConvertedKind(previewKind) && !conversionLoading && !conversionError && !convertedHtml && (
               <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
                 This file type is not supported for in-app preview. Please use Download to access the file.
               </div>
