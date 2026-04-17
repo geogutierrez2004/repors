@@ -233,7 +233,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const viewerTextContent = useMemo(() => {
     if (!viewer || previewKind !== 'text') return '';
     return new TextDecoder().decode(decodeBase64ToBytes(viewer.contentBase64));
-  }, [viewer, previewKind]);
+  }, [viewer?.contentBase64, previewKind]);
   useEffect(() => {
     if (!viewer || (previewKind !== 'docx' && previewKind !== 'xlsx')) {
       setConvertedHtml(null);

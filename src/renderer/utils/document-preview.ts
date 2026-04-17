@@ -1,5 +1,5 @@
 import mammoth from 'mammoth';
-import ExcelJS from 'exceljs';
+import readXlsxFile from 'read-excel-file/universal';
 
 export type PreviewKind = 'pdf' | 'image' | 'text' | 'audio' | 'video' | 'docx' | 'xlsx' | 'fallback';
 
@@ -113,47 +113,34 @@ function escapeHtml(value: unknown): string {
 export async function convertDocxBase64ToHtml(contentBase64: string): Promise<string> {
   const bytes = decodeBase64ToBytes(contentBase64);
   const result = await mammoth.convertToHtml({ arrayBuffer: toArrayBuffer(bytes) });
-  const hasConversionError = result.messages?.some((message) => message.type === 'error');
-  if (hasConversionError) {
-    const details = result.messages
-      .filter((message) => message.type === 'error')
-      .map((message) => message.message)
-      .join('; ');
-    throw new Error(details || 'DOCX conversion failed');
+  const errors = result.messages?.filter((message) => message.type === 'error') ?? [];
+  if (errors.length > 0) {
+    const details = errors.map((message) => message.message).join('; ');
+    throw new Error(details ? `DOCX conversion failed: ${details}` : 'DOCX conversion failed');
   }
   return result.value ?? '';
 }
 
 export async function convertXlsxBase64ToHtml(contentBase64: string): Promise<string> {
   const bytes = decodeBase64ToBytes(contentBase64);
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(toArrayBuffer(bytes));
+  const arrayBuffer = toArrayBuffer(bytes);
+  const sheets = await readXlsxFile(arrayBuffer);
 
-  if (workbook.worksheets.length === 0) {
+  if (sheets.length === 0) {
     return '<p>No worksheets found in this workbook.</p>';
   }
 
-  const sections = workbook.worksheets.map((worksheet) => {
-    const sheetName = worksheet.name || 'Sheet';
-    const rows: string[] = [];
-    if (worksheet.rowCount === 0) {
-      rows.push('<tr><td></td></tr>');
-    } else {
-      for (let rowIndex = 1; rowIndex <= worksheet.rowCount; rowIndex += 1) {
-        const row = worksheet.getRow(rowIndex);
-        const cellCount = Math.max(row.cellCount, 1);
-        const cells: string[] = [];
-        for (let cellIndex = 1; cellIndex <= cellCount; cellIndex += 1) {
-          const cell = row.getCell(cellIndex);
-          cells.push(`<td>${escapeHtml(cell.text)}</td>`);
-        }
-        rows.push(`<tr>${cells.join('')}</tr>`);
-      }
-    }
-    return `<section><h4>${escapeHtml(sheetName)}</h4><table><tbody>${rows.join('')}</tbody></table></section>`;
-  }).join('');
+  const sectionList: string[] = [];
+  for (const sheet of sheets) {
+    const sheetName = sheet.sheet;
+    const values = sheet.data;
+    const rows = values.length > 0
+      ? values.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`)
+      : ['<tr><td></td></tr>'];
+    sectionList.push(`<section><h4>${escapeHtml(sheetName)}</h4><table><tbody>${rows.join('')}</tbody></table></section>`);
+  }
 
-  return sections;
+  return sectionList.join('');
 }
 
 export async function convertPreviewToHtml(previewKind: PreviewKind, contentBase64: string): Promise<string | null> {

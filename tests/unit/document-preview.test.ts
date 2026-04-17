@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import mammoth from 'mammoth';
-import ExcelJS from 'exceljs';
+import readXlsxFile from 'read-excel-file/universal';
 import {
   inferMimeFromFileName,
   getPreviewKind,
@@ -15,9 +15,14 @@ vi.mock('mammoth', () => ({
   },
 }));
 
+vi.mock('read-excel-file/universal', () => ({
+  default: vi.fn(),
+}));
+
 describe('document preview utilities', () => {
   beforeEach(() => {
     vi.mocked(mammoth.convertToHtml).mockReset();
+    vi.mocked(readXlsxFile).mockReset();
   });
 
   it('classifies docx/xlsx previews from MIME and extension', () => {
@@ -45,20 +50,40 @@ describe('document preview utilities', () => {
   });
 
   it('converts XLSX base64 to HTML tables', async () => {
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Grades');
-    sheet.addRow(['Student', 'Score']);
-    sheet.addRow(['Ana', 95]);
-
-    const workbookBuffer = await workbook.xlsx.writeBuffer();
-    const bytes = workbookBuffer instanceof ArrayBuffer ? new Uint8Array(workbookBuffer) : workbookBuffer;
-    const base64 = Buffer.from(bytes).toString('base64');
+    vi.mocked(readXlsxFile).mockResolvedValue([
+      {
+        sheet: 'Grades',
+        data: [
+          ['Student', 'Score'],
+          ['Ana', 95],
+        ],
+      },
+    ]);
+    const base64 = Buffer.from('fake-xlsx').toString('base64');
     const html = await convertXlsxBase64ToHtml(base64);
 
     expect(html).toContain('<table>');
     expect(html).toContain('Grades');
     expect(html).toContain('Ana');
     expect(html).toContain('95');
+    expect(readXlsxFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('escapes special characters in XLSX cell values', async () => {
+    vi.mocked(readXlsxFile).mockResolvedValue([
+      {
+        sheet: 'Unsafe',
+        data: [['<script>alert(1)</script>', '&', '"quote"', '\'single\'']],
+      },
+    ]);
+    const base64 = Buffer.from('fake-xlsx-unsafe').toString('base64');
+    const html = await convertXlsxBase64ToHtml(base64);
+
+    expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+    expect(html).toContain('&amp;');
+    expect(html).toContain('&quot;quote&quot;');
+    expect(html).toContain('&#39;single&#39;');
+    expect(html).not.toContain('<script>alert(1)</script>');
   });
 
   it('falls back for unsupported previews', () => {
