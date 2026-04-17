@@ -113,6 +113,14 @@ function escapeHtml(value: unknown): string {
 export async function convertDocxBase64ToHtml(contentBase64: string): Promise<string> {
   const bytes = decodeBase64ToBytes(contentBase64);
   const result = await mammoth.convertToHtml({ arrayBuffer: toArrayBuffer(bytes) });
+  const hasConversionError = result.messages?.some((message) => message.type === 'error');
+  if (hasConversionError) {
+    const details = result.messages
+      .filter((message) => message.type === 'error')
+      .map((message) => message.message)
+      .join('; ');
+    throw new Error(details || 'DOCX conversion failed');
+  }
   return result.value ?? '';
 }
 

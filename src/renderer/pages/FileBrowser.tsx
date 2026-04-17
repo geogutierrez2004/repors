@@ -260,7 +260,8 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
         const safeHtml = purifier.sanitize(rawHtml, { USE_PROFILES: { html: true } });
         if (cancelled) return;
         setConvertedHtml(safeHtml);
-      } catch {
+      } catch (error) {
+        console.error('Secure document conversion failed', error);
         if (cancelled) return;
         setConversionError('Unable to convert this document for preview. Please use Download to access the file.');
       } finally {
