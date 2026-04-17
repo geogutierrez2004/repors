@@ -7,10 +7,18 @@
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import createDOMPurify from 'dompurify';
 import type { FileRecord, ShelfRecord, PaginatedResult, SourceHandlingMode } from '../../shared/types';
 import type { AddToast } from '../App';
 import type { SafeUser } from '../../shared/types';
 import { cardStyle, btnStyle } from '../App';
+import {
+  type PreviewKind,
+  inferMimeFromFileName,
+  getPreviewKind,
+  decodeBase64ToBytes,
+  convertPreviewToHtml,
+} from '../utils/document-preview';
 
 interface Props {
   sessionId: string;
@@ -33,87 +41,6 @@ export function validateEncryptionPasswords(password: string, confirmPassword: s
   if (!password.trim()) return 'Encryption password is required.';
   if (password !== confirmPassword) return 'Encryption passwords do not match.';
   return null;
-}
-
-type PreviewKind = 'pdf' | 'image' | 'text' | 'audio' | 'video' | 'fallback';
-
-function inferMimeFromFileName(fileName: string): string | null {
-  const lowerName = fileName.toLowerCase();
-  if (lowerName.endsWith('.pdf')) return 'application/pdf';
-  if (lowerName.endsWith('.png')) return 'image/png';
-  if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) return 'image/jpeg';
-  if (lowerName.endsWith('.gif')) return 'image/gif';
-  if (lowerName.endsWith('.webp')) return 'image/webp';
-  if (lowerName.endsWith('.bmp')) return 'image/bmp';
-  if (lowerName.endsWith('.svg')) return 'image/svg+xml';
-  if (lowerName.endsWith('.mp3')) return 'audio/mpeg';
-  if (lowerName.endsWith('.wav')) return 'audio/wav';
-  if (lowerName.endsWith('.ogg')) return 'audio/ogg';
-  if (lowerName.endsWith('.m4a')) return 'audio/mp4';
-  if (lowerName.endsWith('.mp4')) return 'video/mp4';
-  if (lowerName.endsWith('.webm')) return 'video/webm';
-  if (lowerName.endsWith('.mov')) return 'video/quicktime';
-  if (lowerName.endsWith('.txt')) return 'text/plain';
-  if (lowerName.endsWith('.md')) return 'text/markdown';
-  if (lowerName.endsWith('.csv')) return 'text/csv';
-  if (lowerName.endsWith('.json')) return 'application/json';
-  return null;
-}
-
-function getPreviewKind(mimeType: string | null, fileName: string): PreviewKind {
-  const mime = (mimeType ?? inferMimeFromFileName(fileName) ?? '').toLowerCase();
-  const lowerName = fileName.toLowerCase();
-  if (mime === 'application/pdf' || lowerName.endsWith('.pdf')) return 'pdf';
-  if (
-    mime.startsWith('image/')
-    || lowerName.endsWith('.png')
-    || lowerName.endsWith('.jpg')
-    || lowerName.endsWith('.jpeg')
-    || lowerName.endsWith('.gif')
-    || lowerName.endsWith('.webp')
-    || lowerName.endsWith('.bmp')
-    || lowerName.endsWith('.svg')
-  ) {
-    return 'image';
-  }
-  if (
-    mime.startsWith('audio/')
-    || lowerName.endsWith('.mp3')
-    || lowerName.endsWith('.wav')
-    || lowerName.endsWith('.ogg')
-    || lowerName.endsWith('.m4a')
-  ) {
-    return 'audio';
-  }
-  if (
-    mime.startsWith('video/')
-    || lowerName.endsWith('.mp4')
-    || lowerName.endsWith('.webm')
-    || lowerName.endsWith('.mov')
-  ) {
-    return 'video';
-  }
-  if (
-    mime.startsWith('text/')
-    || lowerName.endsWith('.txt')
-    || lowerName.endsWith('.md')
-    || lowerName.endsWith('.csv')
-    || lowerName.endsWith('.json')
-    || lowerName.endsWith('.xml')
-    || lowerName.endsWith('.log')
-  ) {
-    return 'text';
-  }
-  return 'fallback';
-}
-
-function decodeBase64ToBytes(contentBase64: string): Uint8Array {
-  const binary = atob(contentBase64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes;
 }
 
 function fmtBytes(b: number): string {
@@ -259,6 +186,9 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     contentBase64: string;
     cleanupAfterMs: number;
   } | null>(null);
+  const [convertedHtml, setConvertedHtml] = useState<string | null>(null);
+  const [conversionLoading, setConversionLoading] = useState(false);
+  const [conversionError, setConversionError] = useState<string | null>(null);
 
   const loadShelves = useCallback(async () => {
     const res = await window.sccfs.shelves.list(sessionId);
@@ -303,6 +233,46 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const viewerTextContent = useMemo(() => {
     if (!viewer || previewKind !== 'text') return '';
     return new TextDecoder().decode(decodeBase64ToBytes(viewer.contentBase64));
+  }, [viewer, previewKind]);
+  useEffect(() => {
+    if (!viewer || (previewKind !== 'docx' && previewKind !== 'xlsx')) {
+      setConvertedHtml(null);
+      setConversionLoading(false);
+      setConversionError(null);
+      return;
+    }
+
+    let cancelled = false;
+    const convert = async () => {
+      setConversionLoading(true);
+      setConvertedHtml(null);
+      setConversionError(null);
+      try {
+        const rawHtml = await convertPreviewToHtml(previewKind, viewer.contentBase64);
+        if (!rawHtml || cancelled) {
+          if (!cancelled) {
+            setConvertedHtml(null);
+            setConversionError('Unable to convert this document for preview. Please use Download to access the file.');
+          }
+          return;
+        }
+        const purifier = createDOMPurify(window);
+        const safeHtml = purifier.sanitize(rawHtml, { USE_PROFILES: { html: true } });
+        if (cancelled) return;
+        setConvertedHtml(safeHtml);
+      } catch {
+        if (cancelled) return;
+        setConversionError('Unable to convert this document for preview. Please use Download to access the file.');
+      } finally {
+        if (!cancelled) {
+          setConversionLoading(false);
+        }
+      }
+    };
+    void convert();
+    return () => {
+      cancelled = true;
+    };
   }, [viewer, previewKind]);
 
   useEffect(() => {
@@ -1164,6 +1134,25 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             {previewKind === 'text' && <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{viewerTextContent}</pre>}
             {previewKind === 'audio' && <audio controls src={viewerDataUrl} style={{ width: '100%' }} />}
             {previewKind === 'video' && <video controls src={viewerDataUrl} style={{ width: '100%', maxHeight: '65vh' }} />}
+            {(previewKind === 'docx' || previewKind === 'xlsx') && conversionLoading && (
+              <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Converting document...</div>
+            )}
+            {(previewKind === 'docx' || previewKind === 'xlsx') && conversionError && (
+              <div style={{ color: 'var(--danger)', fontSize: 13 }}>
+                {conversionError}
+              </div>
+            )}
+            {(previewKind === 'docx' || previewKind === 'xlsx') && !conversionLoading && !conversionError && convertedHtml && (
+              <div
+                style={{ fontSize: 13, color: 'var(--text-primary)' }}
+                dangerouslySetInnerHTML={{ __html: convertedHtml }}
+              />
+            )}
+            {(previewKind === 'docx' || previewKind === 'xlsx') && !conversionLoading && !conversionError && !convertedHtml && (
+              <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                This file type is not supported for in-app preview. Please use Download to access the file.
+              </div>
+            )}
             {previewKind === 'fallback' && (
               <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
                 This file type is not supported for in-app preview. Please use Download to access the file.
