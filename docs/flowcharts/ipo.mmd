@@ -1,0 +1,50 @@
+```mermaid
+flowchart TB
+  ROOT(["🏢 St. Clare College Filing System<br/>Input-Process-Output (IPO)"])
+  
+  ROOT --> Auth["🔐 P1: Authentication"]
+  Auth --> AuthIn["<b>Input:</b><br/>Credentials (username/password)"]
+  Auth --> AuthProc["<b>Process:</b><br/>PBKDF2 verify<br/>Session token create<br/>RBAC role lookup"]
+  Auth --> AuthOut["<b>Output:</b><br/>Auth token<br/>Session cookie<br/>Dashboard view"]
+  
+  ROOT --> Upload["📄 P2: Upload & Encrypt"]
+  Upload --> UpIn["<b>Input:</b><br/>File + metadata<br/>Encryption choice<br/>Shelf selection"]
+  Upload --> UpProc["<b>Process:</b><br/>AES-256-GCM encrypt<br/>PBKDF2 key derive<br/>Store encrypted payload<br/>Log activity"]
+  Upload --> UpOut["<b>Output:</b><br/>Encrypted file<br/>Metadata record<br/>Confirmation msg"]
+  
+  ROOT --> Org["📁 P3: Organization"]
+  Org --> OrgIn["<b>Input:</b><br/>Shelf operations<br/>(add/rename/delete)"]
+  Org --> OrgProc["<b>Process:</b><br/>Validate RBAC<br/>Update DB<br/>Refresh tree"]
+  Org --> OrgOut["<b>Output:</b><br/>Updated shelf tree<br/>File listing<br/>Activity log"]
+  
+  ROOT --> Download["📥 P4: Download & Decrypt"]
+  Download --> DownIn["<b>Input:</b><br/>File ID<br/>Download request"]
+  Download --> DownProc["<b>Process:</b><br/>RBAC check<br/>Decrypt AES-256-GCM<br/>Stream to client"]
+  Download --> DownOut["<b>Output:</b><br/>Decrypted file<br/>Activity log<br/>Bandwidth usage"]
+  
+  ROOT --> View["👁️ P5: Temporary Secure View"]
+  View --> ViewIn["<b>Input:</b><br/>File ID<br/>Preview request"]
+  View --> ViewProc["<b>Process:</b><br/>Decrypt → temp file<br/>Infer MIME type<br/>Render (PDF/Img/Doc)<br/>Schedule cleanup (2min)"]
+  View --> ViewOut["<b>Output:</b><br/>Temp preview URL<br/>CSP-safe HTML<br/>Auto-delete"]
+  
+  ROOT --> Backup["💾 P6: Backup"]
+  Backup --> BackIn["<b>Input:</b><br/>Backup trigger<br/>Timestamp"]
+  Backup --> BackProc["<b>Process:</b><br/>Export DB<br/>Archive payloads<br/>Compress + sign"]
+  Backup --> BackOut["<b>Output:</b><br/>Archive file<br/>Manifest<br/>Checksum"]
+  
+  ROOT --> Restore["🔄 P7: Restore"]
+  Restore --> RestIn["<b>Input:</b><br/>Archive file<br/>Restore trigger"]
+  Restore --> RestProc["<b>Process:</b><br/>Extract & verify<br/>Restore DB<br/>Sanitize filenames<br/>Invalidate sessions"]
+  Restore --> RestOut["<b>Output:</b><br/>Restored state<br/>Session reset<br/>Activity logged"]
+  
+  classDef input fill:#e3f2fd,stroke:#1565c0,stroke-width:1.5px,color:#000
+  classDef process fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
+  classDef output fill:#e8f5e9,stroke:#2e7d32,stroke-width:1.5px,color:#000
+  classDef title fill:#ffebee,stroke:#c62828,stroke-width:3px,color:#000
+  classDef step fill:#f3e5f5,stroke:#4a148c,stroke-width:1.5px,color:#000
+  
+  class ROOT title
+  class AuthIn,UpIn,OrgIn,DownIn,ViewIn,BackIn,RestIn input
+  class AuthProc,UpProc,OrgProc,DownProc,ViewProc,BackProc,RestProc process
+  class AuthOut,UpOut,OrgOut,DownOut,ViewOut,BackOut,RestOut output
+  class Auth,Upload,Org,Download,View,Backup,Restore step

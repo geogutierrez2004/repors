@@ -1,0 +1,26 @@
+```mermaid
+flowchart TB
+  subgraph EXT[" External Entities "]
+    U["👤 Users<br/>(Faculty/Staff/Admin)"]
+    SM["📊 Backup/Restore<br/>System"]
+  end
+  
+  subgraph SYS[" System Boundary "]
+    P0["🔐 St. Clare College<br/>Filing System<br/>(Main Process)"]
+  end
+  
+  U -->|1. Login & File Ops| P0
+  P0 -->|2. Session & Auth Data| U
+  P0 -->|3. Activity Logs| SM
+  SM -->|4. Backup Trigger| P0
+  P0 -->|5. Encrypted Files| SM
+  P0 -->|6. Config & Metadata| SM
+  SM -->|7. Restore Data| P0
+  
+  classDef external fill:#e1f5ff,stroke:#01579b,stroke-width:2px,color:#000
+  classDef process fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
+  classDef boundary fill:#f3e5f5,stroke:#4a148c,stroke-width:2px
+  
+  class EXT external
+  class P0 process
+  class SYS boundary
