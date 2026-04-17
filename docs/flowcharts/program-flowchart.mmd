@@ -1,0 +1,150 @@
+flowchart TD
+  Start([🚀 App Start]) --> CheckSession{Session Valid?}
+  
+  CheckSession -->|No| Login["📝 Login Page"]
+  Login --> InputCreds["Enter Username/Password"]
+  InputCreds --> ValidateAuth{PBKDF2<br/>Verify}
+  ValidateAuth -->|Failed| LoginError["❌ Error:<br/>Invalid Credentials"]
+  LoginError --> Login
+  ValidateAuth -->|Success| CreateSession["✅ Create Session<br/>Store Token"]
+  CreateSession --> Dashboard["🏠 Dashboard"]
+  
+  CheckSession -->|Yes| Dashboard
+  
+  Dashboard --> UserChoice{User Action?}
+  
+  UserChoice -->|View Files| FileBrowser["📁 File Browser"]
+  FileBrowser --> ShowShelves["Display Shelves"]
+  ShowShelves --> SelectFile{Select File?}
+  SelectFile -->|Cancel| Dashboard
+  SelectFile -->|Download| DownloadFlow["📥 Download"]
+  SelectFile -->|Preview| PreviewFlow["👁️ Preview"]
+  
+  DownloadFlow --> CheckRBAC1{RBAC<br/>Allowed?}
+  CheckRBAC1 -->|Denied| AccessDenied["🚫 Access Denied"]
+  AccessDenied --> Dashboard
+  CheckRBAC1 -->|Allowed| GetFile["Fetch from D3<br/>Encrypted Payloads"]
+  GetFile --> NeedsPassword{Encrypted?}
+  NeedsPassword -->|Yes| PromptPass["Enter Password"]
+  PromptPass --> DeriveKey["PBKDF2 Derive Key"]
+  NeedsPassword -->|No| DecryptFile["Retrieve Plain File"]
+  DeriveKey --> VerifyAuth["Verify Auth Tag"]
+  VerifyAuth --> AuthOK{Auth Tag<br/>Valid?}
+  AuthOK -->|Failed| DecryptError["❌ Decryption Failed"]
+  DecryptError --> Dashboard
+  AuthOK -->|Success| DecryptAES["Decrypt AES-256-GCM"]
+  DecryptFile --> StreamFile["Stream to User"]
+  DecryptAES --> StreamFile
+  StreamFile --> LogActivity1["Log Download"]
+  LogActivity1 --> Dashboard
+  
+  PreviewFlow --> CheckRBAC2{RBAC<br/>Allowed?}
+  CheckRBAC2 -->|Denied| AccessDenied
+  CheckRBAC2 -->|Allowed| FetchEncrypted["Fetch Encrypted File"]
+  FetchEncrypted --> PreviewNeedsPass{Encrypted?}
+  PreviewNeedsPass -->|Yes| PreviewPromptPass["Enter Password"]
+  PreviewNeedsPass -->|No| PreviewPlain["Retrieve Plain File"]
+  PreviewPromptPass --> PreviewDeriveKey["PBKDF2 Derive Key"]
+  PreviewDeriveKey --> PreviewDecrypt["Decrypt AES-256-GCM"]
+  PreviewDecrypt --> CreateTempFile["Write to D8<br/>Temp Files"]
+  PreviewPlain --> CreateTempFile
+  CreateTempFile --> InferMIME["Infer MIME Type"]
+  InferMIME --> RenderType{File Type?}
+  RenderType -->|PDF| PDFViewer["📄 PDF.js Viewer"]
+  RenderType -->|Image| ImgViewer["🖼️ Image Viewer<br/>CSP: data:/blob:"]
+  RenderType -->|DOCX| DocConverter["Mammoth Converter<br/>→ HTML"]
+  RenderType -->|XLSX| SheetConverter["read-excel-file<br/>→ HTML Table"]
+  RenderType -->|Text| TextViewer["📋 Text Preview"]
+  RenderType -->|Other| Fallback["⚠️ Unsupported<br/>Show Download Link"]
+  PDFViewer --> ShowPreview["🔒 Show in<br/>Secure Preview"]
+  ImgViewer --> ShowPreview
+  DocConverter --> ShowPreview
+  SheetConverter --> ShowPreview
+  TextViewer --> ShowPreview
+  Fallback --> ShowPreview
+  ShowPreview --> ScheduleDelete["Schedule Delete<br/>2min TTL"]
+  ScheduleDelete --> LogActivity2["Log Preview"]
+  LogActivity2 --> Dashboard
+  
+  UserChoice -->|Upload File| UploadFlow["📤 Upload"]
+  UploadFlow --> CheckRBAC3{RBAC<br/>Allowed?}
+  CheckRBAC3 -->|Denied| AccessDenied
+  CheckRBAC3 -->|Allowed| SelectFile2["Select File"]
+  SelectFile2 --> CheckQuota{Quota<br/>OK?}
+  CheckQuota -->|Exceeded| QuotaError["❌ Storage Full"]
+  QuotaError --> Dashboard
+  CheckQuota -->|OK| SanitizeFilename["Sanitize Filename<br/>Remove Path Chars"]
+  SanitizeFilename --> EncryptChoice{Encrypt?}
+  EncryptChoice -->|No| StoreFile["Store to D3<br/>Plain"]
+  EncryptChoice -->|Yes| GetPassword["Enter Password"]
+  GetPassword --> ValidatePassPolicy{Pass Policy<br/>Met?}
+  ValidatePassPolicy -->|Failed| PassError["❌ Password Too Weak"]
+  PassError --> GetPassword
+  ValidatePassPolicy -->|OK| GenSalt["Generate Salt<br/>16 bytes"]
+  GenSalt --> GenIV["Generate IV<br/>12 bytes"]
+  GenIV --> DeriveUploadKey["PBKDF2 Derive Key"]
+  DeriveUploadKey --> EncryptFile["Encrypt AES-256-GCM"]
+  EncryptFile --> StoreEncrypted["Store to D3<br/>with Auth Tag"]
+  StoreFile --> SaveMetadata["Save Metadata<br/>to D2"]
+  StoreEncrypted --> SaveMetadata
+  SaveMetadata --> SaveEncryptMeta["Save Encryption Meta<br/>to D5"]
+  SaveEncryptMeta --> UpdateQuota["Update User Quota"]
+  UpdateQuota --> LogActivity3["Log Upload"]
+  LogActivity3 --> Dashboard
+  
+  UserChoice -->|Manage Shelves| ShelfFlow["📚 Shelf Mgmt"]
+  ShelfFlow --> ShelfAction{Action?}
+  ShelfAction -->|List| ShowShelves2["Display Shelves"]
+  ShelfAction -->|Create| NewShelf["Create Shelf"]
+  NewShelf --> ShelfName["Enter Shelf Name"]
+  ShelfName --> CreateShelfDB["Insert to D4"]
+  ShelfAction -->|Rename| RenameShelves["Select Shelf"]
+  RenameShelves --> RenameIt["Update Name"]
+  ShelfAction -->|Delete| DeleteShelves["Select Shelf"]
+  DeleteShelves --> EmptyCheck{Has Files?}
+  EmptyCheck -->|Yes| ShelfError["❌ Delete Files First"]
+  EmptyCheck -->|No| DeleteIt["Delete from D4"]
+  CreateShelfDB --> LogActivity4["Log Shelf Change"]
+  RenameIt --> LogActivity4
+  DeleteIt --> LogActivity4
+  ShowShelves2 --> Dashboard
+  LogActivity4 --> Dashboard
+  
+  UserChoice -->|Activity Log| ActivityFlow["📊 Activity Log"]
+  ActivityFlow --> QueryLog["Read from D6<br/>Activity Log"]
+  QueryLog --> DisplayLog["Display Events<br/>Filter/Sort"]
+  DisplayLog --> Dashboard
+  
+  UserChoice -->|Backup/Restore| BackupFlow["💾 Backup/Restore"]
+  BackupFlow --> AdminCheck{Admin?}
+  AdminCheck -->|No| NotAdmin["🚫 Admin Only"]
+  NotAdmin --> Dashboard
+  AdminCheck -->|Yes| BackupAction{Action?}
+  BackupAction -->|Backup| BackupNow["Export D1,D2,D3<br/>D4,D5,D6,D7"]
+  BackupNow --> CompressArchive["Compress Archive"]
+  CompressArchive --> SignArchive["HMAC Sign"]
+  SignArchive --> SendBackup["Send to SM<br/>Backup System"]
+  SendBackup --> LogActivity5["Log Backup"]
+  LogActivity5 --> Dashboard
+  
+  BackupAction -->|Restore| SelectArchive["Select Archive"]
+  SelectArchive --> VerifyArchive["Verify HMAC<br/>Signature"]
+  VerifyArchive --> SigValid{Valid?}
+  SigValid -->|Failed| RestoreError["❌ Archive Tampered"]
+  RestoreError --> Dashboard
+  SigValid -->|OK| ConfirmRestore["⚠️ Confirm Restore?"]
+  ConfirmRestore --> ExtractArchive["Extract Archive"]
+  ExtractArchive --> ClearDB["Clear D1-D7"]
+  ClearDB --> RestoreTables["Restore Tables<br/>from Archive"]
+  RestoreTables --> SanitizePaths["Sanitize Filenames"]
+  SanitizePaths --> InvalidateSessions["Invalidate All<br/>Sessions"]
+  InvalidateSessions --> LogActivity6["Log Restore"]
+  LogActivity6 --> Dashboard
+  
+  UserChoice -->|Logout| Logout["🚪 Logout"]
+  Logout --> ClearSession["Clear Session<br/>Token"]
+  ClearSession --> LogActivity7["Log Logout"]
+  LogActivity7 --> Login
+  
+  UserChoice -->|Quit| Quit["Exit App"]
+  Quit --> End([🛑 End])
