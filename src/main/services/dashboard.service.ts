@@ -187,7 +187,7 @@ export class DashboardService {
       .get();
     if (!hasSourceModeDefault) {
       this.db
-        .prepare("INSERT INTO app_config (key, value) VALUES ('upload_source_mode_default', 'keep_original')")
+        .prepare("INSERT INTO app_config (key, value) VALUES ('upload_source_mode_default', 'ask_each_time')")
         .run();
     }
 

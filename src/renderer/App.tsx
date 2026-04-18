@@ -405,19 +405,6 @@ export function App(): React.JSX.Element {
           <div style={{ padding: '14px 16px 0', borderTop: '1px solid rgba(255,255,255,.08)', marginTop: 8 }}>
             <div style={{ fontSize: 13, color: 'var(--text-sidebar)', marginBottom: 10, padding: '0 2px' }}>
               <span style={{ fontWeight: 600, color: '#e2e8f0' }}>{user.username}</span>
-              {' '}
-              <span
-                style={{
-                  fontSize: 11,
-                  background: '#334155',
-                  color: '#fff',
-                  borderRadius: 10,
-                  padding: '1px 6px',
-                  textTransform: 'uppercase',
-                }}
-              >
-                single-user
-              </span>
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
               <button

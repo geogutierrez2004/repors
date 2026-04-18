@@ -170,10 +170,12 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
-  const [sourceHandlingMode, setSourceHandlingMode] = useState<SourceHandlingMode>('keep_original');
+  const [sourceHandlingMode, setSourceHandlingMode] = useState<SourceHandlingMode>('ask_each_time');
   const [moveModal, setMoveModal] = useState<string[] | null>(null);
   const [newShelfName, setNewShelfName] = useState('');
   const [addingShelf, setAddingShelf] = useState(false);
+  const [showSourceHandlingModal, setShowSourceHandlingModal] = useState(false);
+  const [sourceHandlingModalResolve, setSourceHandlingModalResolve] = useState<((mode: SourceHandlingMode) => void) | null>(null);
   const [showUploadPasswordModal, setShowUploadPasswordModal] = useState(false);
   const [pendingUploadMode, setPendingUploadMode] = useState<SourceHandlingMode>('keep_original');
   const [uploadPasswordError, setUploadPasswordError] = useState<string | null>(null);
@@ -483,12 +485,19 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       addToast('warning', 'Select a folder before uploading');
       return;
     }
-    let effectiveMode = sourceHandlingMode;
     if (sourceHandlingMode === 'ask_each_time') {
-      const shouldMove = confirm('Move original files to system storage after successful upload?');
-      effectiveMode = shouldMove ? 'move_to_system' : 'keep_original';
+      // Show modal and wait for user choice
+      await new Promise<void>((resolve) => {
+        setSourceHandlingModalResolve(() => (mode: SourceHandlingMode) => {
+          setPendingUploadMode(mode);
+          setShowSourceHandlingModal(false);
+          resolve();
+        });
+        setShowSourceHandlingModal(true);
+      });
+    } else {
+      setPendingUploadMode(sourceHandlingMode);
     }
-    setPendingUploadMode(effectiveMode);
     if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
     if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
     setUploadPasswordError(null);
@@ -959,12 +968,12 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             style={{
               padding: '8px 20px',
               borderBottom: '1px solid var(--border)',
-              background: 'rgba(245, 158, 11, 0.08)',
-              color: '#b45309',
+              background: 'rgba(107, 114, 128, 0.08)',
+              color: '#6b7280',
               fontSize: 12,
             }}
           >
-            Warning: originals are only removed after full per-file success; files are sent to recycle bin/trash by default.
+            Note: originals are only removed after full per-file success; files are sent to recycle bin/trash by default.
           </div>
         )}
 
@@ -1146,6 +1155,37 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
           onCancel={() => setMoveModal(null)}
         />
       )}
+
+      {/* Source Handling Modal */}
+      {showSourceHandlingModal && (
+        <OverlayModal>
+          <h3 style={{ marginTop: 0, marginBottom: 12 }}>File Handling After Upload</h3>
+          <p style={{ marginTop: 0, marginBottom: 16, color: 'var(--text-secondary)', fontSize: 13 }}>
+            Move uploaded files to system storage after successful upload?
+          </p>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => {
+                sourceHandlingModalResolve?.('keep_original');
+                setSourceHandlingModalResolve(null);
+              }}
+              style={btnStyle('secondary', true)}
+            >
+              Keep Originals
+            </button>
+            <button
+              onClick={() => {
+                sourceHandlingModalResolve?.('move_to_system');
+                setSourceHandlingModalResolve(null);
+              }}
+              style={btnStyle('primary', true)}
+            >
+              Move to System
+            </button>
+          </div>
+        </OverlayModal>
+      )}
+
       {showUploadPasswordModal && (
         <OverlayModal>
           <h3 style={{ marginTop: 0, marginBottom: 12 }}>Set Encryption Password</h3>
