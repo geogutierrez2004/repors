@@ -18,6 +18,8 @@ import type {
   ActivityRecord,
   StorageStats,
   DashboardStats,
+  SecurityIntegrityStats,
+  SecurityThresholdSettings,
   SessionInfo,
   PaginatedResult,
   FileUploadResult,
@@ -77,6 +79,15 @@ const api = {
   dashboard: {
     stats: (sessionId: string) =>
       safeInvoke<DashboardStats>(IPC_CHANNELS.DASHBOARD_STATS, { sessionId }),
+
+    securityIntegrityStats: (sessionId: string) =>
+      safeInvoke<SecurityIntegrityStats>(IPC_CHANNELS.SECURITY_INTEGRITY_STATS, { sessionId }),
+
+    getSecurityThresholdSettings: (sessionId: string) =>
+      safeInvoke<SecurityThresholdSettings>(IPC_CHANNELS.SECURITY_THRESHOLD_GET, { sessionId }),
+
+    setSecurityThresholdSettings: (sessionId: string, settings: SecurityThresholdSettings) =>
+      safeInvoke<SecurityThresholdSettings>(IPC_CHANNELS.SECURITY_THRESHOLD_SET, { sessionId, settings }),
   },
 
   files: {

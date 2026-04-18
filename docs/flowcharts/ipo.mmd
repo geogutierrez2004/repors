@@ -12,9 +12,9 @@ flowchart TB
   Upload --> UpOut["<b>Output:</b><br/>Encrypted file<br/>Metadata record<br/>Confirmation msg"]
   
   ROOT --> Org["📁 P3: Organization"]
-  Org --> OrgIn["<b>Input:</b><br/>Shelf operations<br/>(add/rename/delete)"]
+  Org --> OrgIn["<b>Input:</b><br/>Folder operations<br/>(add/rename/delete)"]
   Org --> OrgProc["<b>Process:</b><br/>Validate RBAC<br/>Update DB<br/>Refresh tree"]
-  Org --> OrgOut["<b>Output:</b><br/>Updated shelf tree<br/>File listing<br/>Activity log"]
+  Org --> OrgOut["<b>Output:</b><br/>Updated folder tree<br/>File listing<br/>Activity log"]
   
   ROOT --> Download["📥 P4: Download & Decrypt"]
   Download --> DownIn["<b>Input:</b><br/>File ID<br/>Download request"]
@@ -35,6 +35,11 @@ flowchart TB
   Restore --> RestIn["<b>Input:</b><br/>Archive file<br/>Restore trigger"]
   Restore --> RestProc["<b>Process:</b><br/>Extract & verify<br/>Restore DB<br/>Sanitize filenames<br/>Invalidate sessions"]
   Restore --> RestOut["<b>Output:</b><br/>Restored state<br/>Session reset<br/>Activity logged"]
+
+  ROOT --> Thresholds["🎚 P8: Threshold Settings"]
+  Thresholds --> ThrIn["<b>Input:</b><br/>Storage warning/danger %<br/>Upload failure warning/danger"]
+  Thresholds --> ThrProc["<b>Process:</b><br/>Validate bounds<br/>Persist to app_config<br/>Apply severity mapping"]
+  Thresholds --> ThrOut["<b>Output:</b><br/>Updated security card tones<br/>Threshold config saved"]
   
   classDef input fill:#e3f2fd,stroke:#1565c0,stroke-width:1.5px,color:#000
   classDef process fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
@@ -43,7 +48,7 @@ flowchart TB
   classDef step fill:#f3e5f5,stroke:#4a148c,stroke-width:1.5px,color:#000
   
   class ROOT title
-  class AuthIn,UpIn,OrgIn,DownIn,ViewIn,BackIn,RestIn input
-  class AuthProc,UpProc,OrgProc,DownProc,ViewProc,BackProc,RestProc process
-  class AuthOut,UpOut,OrgOut,DownOut,ViewOut,BackOut,RestOut output
-  class Auth,Upload,Org,Download,View,Backup,Restore step
+  class AuthIn,UpIn,OrgIn,DownIn,ViewIn,BackIn,RestIn,ThrIn input
+  class AuthProc,UpProc,OrgProc,DownProc,ViewProc,BackProc,RestProc,ThrProc process
+  class AuthOut,UpOut,OrgOut,DownOut,ViewOut,BackOut,RestOut,ThrOut output
+  class Auth,Upload,Org,Download,View,Backup,Restore,Thresholds step

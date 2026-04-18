@@ -343,8 +343,8 @@ export function App(): React.JSX.Element {
         <aside
           className="no-print"
           style={{
-            width: 220,
-            minWidth: 220,
+            width: 248,
+            minWidth: 248,
             background: 'var(--bg-sidebar)',
             display: 'flex',
             flexDirection: 'column',
@@ -355,21 +355,21 @@ export function App(): React.JSX.Element {
           {/* Logo */}
           <div
             style={{
-              padding: '20px 20px 16px',
+              padding: '22px 22px 18px',
               borderBottom: '1px solid rgba(255,255,255,.08)',
               marginBottom: 8,
             }}
           >
-            <div style={{ fontSize: 13, fontWeight: 700, color: '#fff', letterSpacing: .5 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: '#fff', letterSpacing: .5 }}>
               SCCFS
             </div>
-            <div style={{ fontSize: 11, color: 'var(--text-sidebar)', marginTop: 2 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-sidebar)', marginTop: 2 }}>
               St. Clare College
             </div>
           </div>
 
           {/* Nav items */}
-          <nav style={{ flex: 1, padding: '0 10px' }}>
+          <nav style={{ flex: 1, padding: '0 12px' }}>
             {NAV_ITEMS.map((item) => {
               const active = page === item.id;
               return (
@@ -379,22 +379,22 @@ export function App(): React.JSX.Element {
                   style={{
                     display: 'flex',
                     alignItems: 'center',
-                    gap: 10,
+                    gap: 12,
                     width: '100%',
-                    padding: '9px 12px',
-                    borderRadius: 6,
+                    padding: '11px 14px',
+                    borderRadius: 8,
                     border: 'none',
                     background: active ? 'var(--accent)' : 'transparent',
                     color: active ? '#fff' : 'var(--text-sidebar)',
-                    fontSize: 13,
+                    fontSize: 14,
                     fontWeight: active ? 600 : 400,
                     cursor: 'pointer',
-                    marginBottom: 2,
+                    marginBottom: 4,
                     textAlign: 'left',
                     transition: 'background var(--transition)',
                   }}
                 >
-                  <span>{item.icon}</span>
+                  <span style={{ fontSize: 16, lineHeight: 1 }}>{item.icon}</span>
                   <span>{item.label}</span>
                 </button>
               );
@@ -402,13 +402,13 @@ export function App(): React.JSX.Element {
           </nav>
 
           {/* Bottom: user + theme toggle */}
-          <div style={{ padding: '12px 14px 0', borderTop: '1px solid rgba(255,255,255,.08)', marginTop: 8 }}>
-            <div style={{ fontSize: 12, color: 'var(--text-sidebar)', marginBottom: 8, padding: '0 2px' }}>
+          <div style={{ padding: '14px 16px 0', borderTop: '1px solid rgba(255,255,255,.08)', marginTop: 8 }}>
+            <div style={{ fontSize: 13, color: 'var(--text-sidebar)', marginBottom: 10, padding: '0 2px' }}>
               <span style={{ fontWeight: 600, color: '#e2e8f0' }}>{user.username}</span>
               {' '}
               <span
                 style={{
-                  fontSize: 10,
+                  fontSize: 11,
                   background: '#334155',
                   color: '#fff',
                   borderRadius: 10,
@@ -425,13 +425,13 @@ export function App(): React.JSX.Element {
                 title="Toggle dark mode"
                 style={{
                   flex: 1,
-                  padding: '6px 8px',
-                  borderRadius: 6,
+                  padding: '8px 10px',
+                  borderRadius: 8,
                   border: '1px solid rgba(255,255,255,.12)',
                   background: 'transparent',
                   color: 'var(--text-sidebar)',
                   cursor: 'pointer',
-                  fontSize: 12,
+                  fontSize: 13,
                 }}
               >
                 {theme === 'dark' ? '☀️ Light' : '🌙 Dark'}
@@ -441,13 +441,13 @@ export function App(): React.JSX.Element {
                 title="Log out"
                 style={{
                   flex: 1,
-                  padding: '6px 8px',
-                  borderRadius: 6,
+                  padding: '8px 10px',
+                  borderRadius: 8,
                   border: '1px solid rgba(255,255,255,.12)',
                   background: 'transparent',
                   color: 'var(--text-sidebar)',
                   cursor: 'pointer',
-                  fontSize: 12,
+                  fontSize: 13,
                 }}
               >
                 🚪 Logout

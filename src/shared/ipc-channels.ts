@@ -21,6 +21,9 @@ export const IPC_CHANNELS = {
 
   // Dashboard aggregate stats
   DASHBOARD_STATS: 'sccfs:dashboard:stats',
+  SECURITY_INTEGRITY_STATS: 'sccfs:security:integrity-stats',
+  SECURITY_THRESHOLD_GET: 'sccfs:security:threshold-get',
+  SECURITY_THRESHOLD_SET: 'sccfs:security:threshold-set',
 
   // File management
   FILES_LIST: 'sccfs:files:list',

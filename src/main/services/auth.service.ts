@@ -18,6 +18,8 @@ import type {
 import { hashPassword, verifyPassword, validatePasswordPolicy } from '../utils/password';
 import { createSession, validateSession, destroySession, destroyUserSessions } from './session.service';
 
+const ANONYMOUS_UPLOAD_USER_ID = '00000000-0000-4000-a000-000000000010';
+
 // ────────────────────────────────────────
 // Helpers
 // ────────────────────────────────────────
@@ -175,7 +177,9 @@ export class AuthService {
   listUsers(sessionId: string): SafeUser[] {
     this.requireAuth(sessionId);
 
-    const rows = this.db.prepare('SELECT * FROM users ORDER BY username').all() as UserRecord[];
+    const rows = this.db
+      .prepare('SELECT * FROM users WHERE id != ? ORDER BY username')
+      .all(ANONYMOUS_UPLOAD_USER_ID) as UserRecord[];
     return rows.map(toSafeUser);
   }
 
@@ -203,8 +207,8 @@ export class AuthService {
 
   async seedDefaultAdmin(username: string, password: string): Promise<void> {
     const users = this.db
-      .prepare('SELECT id, username FROM users ORDER BY rowid ASC')
-      .all() as Array<{ id: string; username: string }>;
+      .prepare('SELECT id, username FROM users WHERE id != ? ORDER BY rowid ASC')
+      .all(ANONYMOUS_UPLOAD_USER_ID) as Array<{ id: string; username: string }>;
     const hash = await hashPassword(password);
 
     if (users.length === 0) {

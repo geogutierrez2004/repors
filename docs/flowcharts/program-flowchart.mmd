@@ -14,7 +14,7 @@ flowchart TD
   Dashboard --> UserChoice{User Action?}
   
   UserChoice -->|View Files| FileBrowser["📁 File Browser"]
-  FileBrowser --> ShowShelves["Display Shelves"]
+  FileBrowser --> ShowFolders["Display Folders"]
   ShowShelves --> SelectFile{Select File?}
   SelectFile -->|Cancel| Dashboard
   SelectFile -->|Download| DownloadFlow["📥 Download"]
@@ -70,7 +70,10 @@ flowchart TD
   UploadFlow --> SessionGuard3{Session<br/>Valid?}
   SessionGuard3 -->|No| SessionDenied
   SessionGuard3 -->|Yes| SelectFile2["Select File"]
-  SelectFile2 --> CheckQuota{Quota<br/>OK?}
+  SelectFile2 --> CheckStorageLevel{Usage above<br/>warning threshold?}
+  CheckStorageLevel -->|Yes| StorageWarn["⚠️ Show Storage Warning"]
+  CheckStorageLevel -->|No| CheckQuota{Quota<br/>OK?}
+  StorageWarn --> CheckQuota
   CheckQuota -->|Exceeded| QuotaError["❌ Storage Full"]
   QuotaError --> Dashboard
   CheckQuota -->|OK| SanitizeFilename["Sanitize Filename<br/>Remove Path Chars"]
@@ -92,15 +95,15 @@ flowchart TD
   UpdateQuota --> LogActivity3["Log Upload"]
   LogActivity3 --> Dashboard
   
-  UserChoice -->|Manage Shelves| ShelfFlow["📚 Shelf Mgmt"]
+  UserChoice -->|Manage Folders| ShelfFlow["📚 Folder Mgmt"]
   ShelfFlow --> ShelfAction{Action?}
-  ShelfAction -->|List| ShowShelves2["Display Shelves"]
-  ShelfAction -->|Create| NewShelf["Create Shelf"]
-  NewShelf --> ShelfName["Enter Shelf Name"]
+  ShelfAction -->|List| ShowShelves2["Display Folders"]
+  ShelfAction -->|Create| NewShelf["Create Folder"]
+  NewShelf --> ShelfName["Enter Folder Name"]
   ShelfName --> CreateShelfDB["Insert to D4"]
-  ShelfAction -->|Rename| RenameShelves["Select Shelf"]
+  ShelfAction -->|Rename| RenameShelves["Select Folder"]
   RenameShelves --> RenameIt["Update Name"]
-  ShelfAction -->|Delete| DeleteShelves["Select Shelf"]
+  ShelfAction -->|Delete| DeleteShelves["Select Folder"]
   DeleteShelves --> EmptyCheck{Has Files?}
   EmptyCheck -->|Yes| ShelfError["❌ Delete Files First"]
   EmptyCheck -->|No| DeleteIt["Delete from D4"]
@@ -114,6 +117,18 @@ flowchart TD
   ActivityFlow --> QueryLog["Read from D6<br/>Activity Log"]
   QueryLog --> DisplayLog["Display Events<br/>Filter/Sort"]
   DisplayLog --> Dashboard
+
+  UserChoice -->|Security Dashboard| SecurityFlow["🛡️ Security Integrity"]
+  SecurityFlow --> LoadIntegrity["Load Integrity Metrics"]
+  LoadIntegrity --> LoadThresholds["Load Threshold Settings"]
+  LoadThresholds --> ApplyThresholds["Apply Severity Rules"]
+  ApplyThresholds --> SecurityAction{Adjust Thresholds?}
+  SecurityAction -->|No| Dashboard
+  SecurityAction -->|Yes| ValidateThresholds{Valid Bounds?}
+  ValidateThresholds -->|No| ThresholdError["❌ Invalid Threshold Values"]
+  ThresholdError --> SecurityFlow
+  ValidateThresholds -->|Yes| SaveThresholds["Save to App Config"]
+  SaveThresholds --> Dashboard
   
   UserChoice -->|Backup/Restore| BackupFlow["💾 Backup/Restore"]
   BackupFlow --> SessionGuard4{Session<br/>Valid?}

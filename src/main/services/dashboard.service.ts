@@ -19,12 +19,15 @@ import { validateSession, listSessions } from './session.service';
 import { destroySession } from './session.service';
 import { AuthError } from './auth.service';
 import { SYSTEM_SHELVES, STORAGE_CONSTANTS } from '../../shared/constants';
+import { DEFAULT_SECURITY_THRESHOLD_SETTINGS } from '../../shared/types';
 import type {
   FileRecord,
   ShelfRecord,
   ActivityRecord,
   StorageStats,
   DashboardStats,
+  SecurityIntegrityStats,
+  SecurityThresholdSettings,
   SessionInfo,
   PaginatedResult,
   UserRecord,
@@ -103,6 +106,8 @@ const GCM_SALT_BYTES = 16;
 const TEMP_PART_EXTENSION = '.part';
 const SECURE_TEMP_VIEW_TTL_MS = 2 * 60 * 1000;
 const MAX_SECURE_TEMP_CLEANUP_RETRIES = 3;
+const ANONYMOUS_UPLOAD_USER_ID = '00000000-0000-4000-a000-000000000010';
+const ANONYMOUS_UPLOAD_USERNAME = '__system_upload__';
 
 function extractErrorCode(error: unknown): string {
   return typeof error === 'object' && error && 'code' in error
@@ -279,6 +284,137 @@ export class DashboardService {
     };
   }
 
+  getSecurityIntegrityStats(sessionId: string): SecurityIntegrityStats {
+    requireAuth(sessionId);
+
+    const fileSecurity = this.db
+      .prepare(
+        `SELECT COUNT(*) as total,
+                SUM(CASE WHEN is_encrypted = 1 THEN 1 ELSE 0 END) as encrypted,
+                SUM(CASE WHEN is_encrypted = 0 THEN 1 ELSE 0 END) as unencrypted,
+                COALESCE(SUM(size_bytes), 0) as used_bytes
+         FROM files`,
+      )
+      .get() as { total: number; encrypted: number | null; unencrypted: number | null; used_bytes: number };
+
+    const quotaRow = this.db
+      .prepare("SELECT value FROM storage_config WHERE key = 'quota_bytes'")
+      .get() as { value: string } | undefined;
+    const quotaBytes = quotaRow ? Number(quotaRow.value) : STORAGE_CONSTANTS.DEFAULT_QUOTA_BYTES;
+    const storageUsedPercent = quotaBytes > 0
+      ? (fileSecurity.used_bytes / quotaBytes) * 100
+      : 0;
+
+    const pendingUploads = this.db
+      .prepare("SELECT COUNT(*) as cnt FROM upload_history WHERE status IN ('pending','in_progress')")
+      .get() as { cnt: number };
+
+    const failedUploads24h = this.db
+      .prepare("SELECT COUNT(*) as cnt FROM upload_history WHERE status = 'failed' AND started_at >= datetime('now', '-1 day')")
+      .get() as { cnt: number };
+
+    const failedUploads7d = this.db
+      .prepare("SELECT COUNT(*) as cnt FROM upload_history WHERE status = 'failed' AND started_at >= datetime('now', '-7 day')")
+      .get() as { cnt: number };
+
+    const failureReasons = this.db
+      .prepare(
+        `SELECT COALESCE(NULLIF(error, ''), 'UNKNOWN') as reason, COUNT(*) as count
+         FROM upload_history
+         WHERE status = 'failed' AND started_at >= datetime('now', '-7 day')
+         GROUP BY reason
+         ORDER BY count DESC
+         LIMIT 8`,
+      )
+      .all() as Array<{ reason: string; count: number }>;
+
+    const lockoutRows = this.db
+      .prepare(
+        `SELECT strftime('%H', created_at) as hour, COUNT(*) as count
+         FROM activity_log
+         WHERE action IN ('ACCOUNT_LOCKED', 'LOGIN_FAILED')
+           AND created_at >= datetime('now', '-1 day')
+         GROUP BY hour
+         ORDER BY hour ASC`,
+      )
+      .all() as Array<{ hour: string; count: number }>;
+    const lockoutMap = new Map(lockoutRows.map((row) => [Number(row.hour), row.count]));
+
+    const threatActivityByHour: SecurityIntegrityStats['threat_activity_by_hour'] =
+      Array.from({ length: 24 }, (_unused, hour) => ({
+        hour: `${String(hour).padStart(2, '0')}:00`,
+        count: lockoutMap.get(hour) ?? 0,
+      }));
+
+    const lockoutEvents24h = lockoutRows.reduce((total, row) => total + row.count, 0);
+
+    const backupRow = this.db
+      .prepare("SELECT MAX(created_at) as last_backup_at FROM activity_log WHERE action = 'STORAGE_BACKUP'")
+      .get() as { last_backup_at: string | null };
+
+    const criticalEvents = this.db
+      .prepare(
+        `SELECT a.id, a.user_id, u.username, a.action, a.detail, a.created_at
+         FROM activity_log a
+         LEFT JOIN users u ON a.user_id = u.id
+         WHERE a.action IN ('FILE_DELETE', 'STORAGE_RESTORE', 'ACCOUNT_LOCKED', 'LOGIN_FAILED')
+         ORDER BY a.created_at DESC
+         LIMIT 12`,
+      )
+      .all() as ActivityRecord[];
+
+    return {
+      total_files: fileSecurity.total,
+      encrypted_files: fileSecurity.encrypted ?? 0,
+      unencrypted_files: fileSecurity.unencrypted ?? 0,
+      pending_uploads: pendingUploads.cnt,
+      failed_uploads_24h: failedUploads24h.cnt,
+      failed_uploads_7d: failedUploads7d.cnt,
+      storage_used_bytes: fileSecurity.used_bytes,
+      storage_quota_bytes: quotaBytes,
+      storage_used_percent: storageUsedPercent,
+      lockout_events_24h: lockoutEvents24h,
+      last_backup_at: backupRow.last_backup_at,
+      upload_failures_by_reason: failureReasons,
+      threat_activity_by_hour: threatActivityByHour,
+      critical_events: criticalEvents,
+    };
+  }
+
+  getSecurityThresholdSettings(sessionId: string): SecurityThresholdSettings {
+    requireAuth(sessionId);
+
+    const row = this.db
+      .prepare("SELECT value FROM app_config WHERE key = 'security_threshold_settings'")
+      .get() as { value: string } | undefined;
+
+    if (!row?.value) {
+      return { ...DEFAULT_SECURITY_THRESHOLD_SETTINGS };
+    }
+
+    try {
+      const parsed = JSON.parse(row.value) as Partial<SecurityThresholdSettings>;
+      return this.normalizeSecurityThresholdSettings(parsed);
+    } catch {
+      return { ...DEFAULT_SECURITY_THRESHOLD_SETTINGS };
+    }
+  }
+
+  setSecurityThresholdSettings(
+    sessionId: string,
+    settings: SecurityThresholdSettings,
+  ): SecurityThresholdSettings {
+    requireAuth(sessionId);
+
+    const normalized = this.normalizeSecurityThresholdSettings(settings);
+
+    this.db
+      .prepare("INSERT OR REPLACE INTO app_config (key, value) VALUES ('security_threshold_settings', ?)")
+      .run(JSON.stringify(normalized));
+
+    return normalized;
+  }
+
   // ── Files ───────────────────────────
 
   listFiles(
@@ -307,7 +443,6 @@ export class DashboardService {
         .prepare(
           `SELECT COUNT(*) as cnt FROM files f
            JOIN shelves s ON f.shelf_id = s.id
-           LEFT JOIN users u ON f.uploaded_by = u.id
            ${where}`,
         )
         .get(...params) as { cnt: number }
@@ -318,11 +453,9 @@ export class DashboardService {
         `SELECT f.id, f.original_name, f.stored_name, f.mime_type, f.size_bytes, f.sha256,
                 f.original_extension,
                 f.shelf_id, s.name as shelf_name,
-                f.uploaded_by, COALESCE(u.username, '') as uploader_name,
                 f.is_encrypted, f.created_at, f.updated_at
          FROM files f
          JOIN shelves s ON f.shelf_id = s.id
-         LEFT JOIN users u ON f.uploaded_by = u.id
          ${where}
          ORDER BY f.created_at DESC
          LIMIT ? OFFSET ?`,
@@ -370,6 +503,8 @@ export class DashboardService {
     const resultItems: FileUploadItemResult[] = [];
     const mode: SourceHandlingMode = sourceHandlingMode === 'ask_each_time' ? 'keep_original' : sourceHandlingMode;
     const normalizedEncryptionPassword = encryptionPassword?.trim();
+
+    this.ensureAnonymousUploadUser();
 
     if (encrypt && !normalizedEncryptionPassword) {
       throw new AuthError('ENCRYPTION_PASSWORD_REQUIRED', 'Encryption password is required for encrypted upload.');
@@ -509,7 +644,7 @@ export class DashboardService {
               stat.size,
               sha256,
               shelfId,
-              session.userId,
+              ANONYMOUS_UPLOAD_USER_ID,
               encrypt ? 1 : 0,
               payloadId,
             );
@@ -553,7 +688,7 @@ export class DashboardService {
         }
 
         this.logActivity(
-          session.userId,
+          null,
           'FILE_UPLOAD',
           encrypt ? `Uploaded encrypted ${sourceName}` : `Uploaded ${sourceName}`,
         );
@@ -620,7 +755,7 @@ export class DashboardService {
       .prepare('INSERT INTO downloads (id, file_id, user_id) VALUES (?, ?, ?)')
       .run(uuidv4(), fileId, session.userId);
 
-    this.logActivity(session.userId, 'FILE_DOWNLOAD', `Downloaded ${fileRow.original_name}`);
+    this.logActivity(null, 'FILE_DOWNLOAD', `Downloaded ${fileRow.original_name}`);
   }
 
   async viewEncryptedFile(
@@ -628,7 +763,7 @@ export class DashboardService {
     fileId: string,
     decryptionPassword: string,
   ): Promise<SecureTempViewResult> {
-    const session = requireAuth(sessionId);
+    requireAuth(sessionId);
 
     const fileRow = this.db
       .prepare('SELECT * FROM files WHERE id = ?')
@@ -662,7 +797,7 @@ export class DashboardService {
     const contentBase64 = fs.readFileSync(tempFilePath).toString('base64');
     this.secureViewTempById.set(viewId, { tempDir, tempFilePath });
     this.scheduleSecureTempViewCleanup(viewId, tempDir);
-    this.logActivity(session.userId, 'FILE_VIEW', `Viewed encrypted ${fileRow.original_name}`);
+    this.logActivity(null, 'FILE_VIEW', `Viewed encrypted ${fileRow.original_name}`);
     return {
       viewId,
       fileName: this.resolveDownloadFileName(fileRow),
@@ -694,7 +829,7 @@ export class DashboardService {
   }
 
   deleteFile(sessionId: string, fileId: string): void {
-    const session = requireAuth(sessionId);
+    requireAuth(sessionId);
 
     const fileRow = this.db
       .prepare('SELECT * FROM files WHERE id = ?')
@@ -734,11 +869,11 @@ export class DashboardService {
       fs.unlinkSync(payloadToDeletePath);
     }
 
-    this.logActivity(session.userId, 'FILE_DELETE', `Deleted ${fileRow.original_name}`);
+    this.logActivity(null, 'FILE_DELETE', `Deleted ${fileRow.original_name}`);
   }
 
   moveFile(sessionId: string, fileId: string, targetShelfId: string): FileRecord {
-    const session = requireAuth(sessionId);
+    requireAuth(sessionId);
 
     const fileRow = this.db.prepare('SELECT id, original_name FROM files WHERE id = ?').get(fileId) as
       | { id: string; original_name: string }
@@ -752,7 +887,7 @@ export class DashboardService {
       .prepare("UPDATE files SET shelf_id = ?, updated_at = datetime('now') WHERE id = ?")
       .run(targetShelfId, fileId);
 
-    this.logActivity(session.userId, 'FILE_MOVE', `Moved ${fileRow.original_name} to new shelf`);
+    this.logActivity(null, 'FILE_MOVE', `Moved ${fileRow.original_name} to new shelf`);
     return this.getFileRecord(fileId);
   }
 
@@ -1114,14 +1249,53 @@ export class DashboardService {
       .prepare(
         `SELECT f.id, f.original_name, f.original_extension, f.stored_name, f.mime_type, f.size_bytes, f.sha256,
                 f.shelf_id, s.name as shelf_name,
-                f.uploaded_by, COALESCE(u.username, '') as uploader_name,
                 f.is_encrypted, f.created_at, f.updated_at
          FROM files f
          JOIN shelves s ON f.shelf_id = s.id
-         LEFT JOIN users u ON f.uploaded_by = u.id
          WHERE f.id = ?`,
       )
       .get(fileId) as FileRecord;
+  }
+
+  private normalizeSecurityThresholdSettings(
+    input: Partial<SecurityThresholdSettings>,
+  ): SecurityThresholdSettings {
+    const storageWarn = Number.isFinite(input.storage_warn_percent)
+      ? Number(input.storage_warn_percent)
+      : DEFAULT_SECURITY_THRESHOLD_SETTINGS.storage_warn_percent;
+    const storageDangerRaw = Number.isFinite(input.storage_danger_percent)
+      ? Number(input.storage_danger_percent)
+      : DEFAULT_SECURITY_THRESHOLD_SETTINGS.storage_danger_percent;
+    const storageDanger = Math.max(storageWarn + 1, storageDangerRaw);
+
+    const uploadWarn = Number.isFinite(input.upload_fail_warn_24h)
+      ? Math.max(0, Math.trunc(Number(input.upload_fail_warn_24h)))
+      : DEFAULT_SECURITY_THRESHOLD_SETTINGS.upload_fail_warn_24h;
+    const uploadDangerRaw = Number.isFinite(input.upload_fail_danger_24h)
+      ? Math.max(0, Math.trunc(Number(input.upload_fail_danger_24h)))
+      : DEFAULT_SECURITY_THRESHOLD_SETTINGS.upload_fail_danger_24h;
+    const uploadDanger = Math.max(uploadWarn, uploadDangerRaw);
+
+    return {
+      storage_warn_percent: Math.max(1, Math.min(99, storageWarn)),
+      storage_danger_percent: Math.max(2, Math.min(100, storageDanger)),
+      upload_fail_warn_24h: Math.min(1000, uploadWarn),
+      upload_fail_danger_24h: Math.min(1000, uploadDanger),
+    };
+  }
+
+  private ensureAnonymousUploadUser(): void {
+    const existing = this.db
+      .prepare('SELECT id FROM users WHERE id = ?')
+      .get(ANONYMOUS_UPLOAD_USER_ID) as { id: string } | undefined;
+    if (existing) return;
+
+    this.db
+      .prepare(
+        `INSERT INTO users (id, username, password_hash, role, is_active, failed_attempts, locked_until)
+         VALUES (?, ?, ?, 'staff', 0, 0, NULL)`,
+      )
+      .run(ANONYMOUS_UPLOAD_USER_ID, ANONYMOUS_UPLOAD_USERNAME, '!');
   }
 
   private getShelfRecord(shelfId: string): ShelfRecord {
@@ -1138,7 +1312,7 @@ export class DashboardService {
       .get(shelfId) as ShelfRecord;
   }
 
-  private logActivity(userId: string, action: string, detail: string): void {
+  private logActivity(userId: string | null, action: string, detail: string): void {
     this.db
       .prepare('INSERT INTO activity_log (id, user_id, action, detail) VALUES (?, ?, ?, ?)')
       .run(uuidv4(), userId, action, detail);

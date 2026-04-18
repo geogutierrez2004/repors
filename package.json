@@ -6,7 +6,7 @@
   "scripts": {
     "postinstall": "electron-rebuild",
     "build:main": "tsc -p tsconfig.main.json",
-    "build:renderer": "esbuild src/renderer/index.tsx --bundle --platform=browser --format=iife --outfile=dist/renderer/renderer/index.js --sourcemap && node -e \"const fs=require('fs'); const path=require('path'); const src='src/renderer/index.html'; const dest='dist/renderer/renderer/index.html'; fs.mkdirSync(path.dirname(dest), { recursive: true }); fs.copyFileSync(src, dest);\"",
+    "build:renderer": "esbuild src/renderer/index.tsx --bundle --platform=browser --format=iife --outfile=dist/renderer/renderer/index.js --sourcemap && node -e \"const fs=require('fs'); const path=require('path'); const htmlSrc='src/renderer/index.html'; const htmlDest='dist/renderer/renderer/index.html'; const workerSrc='node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'; const workerDest='dist/renderer/renderer/pdf.worker.mjs'; fs.mkdirSync(path.dirname(htmlDest), { recursive: true }); fs.copyFileSync(htmlSrc, htmlDest); fs.copyFileSync(workerSrc, workerDest);\"",
     "build": "npm run build:main && npm run build:renderer",
     "test": "vitest run",
     "test:watch": "vitest",

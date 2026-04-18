@@ -263,10 +263,10 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
 
       {/* Charts row */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-        {/* Storage by shelf */}
+        {/* Storage by folder */}
         <div style={cardStyle()}>
           <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16, color: 'var(--text-primary)' }}>
-            Storage by Shelf
+            Storage by Folder
           </h2>
           {shelfChartData.length === 0 ? (
             <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>No data</p>

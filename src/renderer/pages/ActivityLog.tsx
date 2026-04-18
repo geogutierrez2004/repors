@@ -18,6 +18,7 @@ interface Props {
 }
 
 const PAGE_SIZE = 50;
+const EXPORT_PAGE_SIZE = 100;
 
 const ACTIONS = [
   'LOGIN', 'LOGOUT', 'LOGIN_FAILED', 'ACCOUNT_LOCKED',
@@ -137,11 +138,10 @@ function ActivityHeatmap({ items }: { items: ActivityRecord[] }) {
 // ────────────────────────────────────────
 
 function exportCsv(items: ActivityRecord[]) {
-  const header = 'Timestamp,User,Action,Detail';
+  const header = 'Timestamp,Action,Detail';
   const rows = items.map((a) =>
     [
       `"${a.created_at}"`,
-      `"${a.username ?? 'system'}"`,
       `"${a.action}"`,
       `"${(a.detail ?? '').replace(/"/g, '""')}"`,
     ].join(','),
@@ -156,6 +156,33 @@ function exportCsv(items: ActivityRecord[]) {
   URL.revokeObjectURL(url);
 }
 
+async function fetchAllMatchingActivity(
+  sessionId: string,
+): Promise<ActivityRecord[]> {
+  const items: ActivityRecord[] = [];
+  let page = 1;
+  let total = Number.POSITIVE_INFINITY;
+
+  while (items.length < total) {
+    const res = await window.sccfs.activity.list(sessionId, {
+      page,
+      pageSize: EXPORT_PAGE_SIZE,
+    });
+
+    if (!res.ok) {
+      throw new Error(res.error?.message ?? 'Failed to fetch activity pages');
+    }
+
+    total = res.data.total;
+    items.push(...res.data.items);
+
+    if (res.data.items.length === 0) break;
+    page += 1;
+  }
+
+  return items.slice(0, Number.isFinite(total) ? total : items.length);
+}
+
 // ────────────────────────────────────────
 // Main
 // ────────────────────────────────────────
@@ -166,6 +193,7 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
   });
   const [allItems, setAllItems] = useState<ActivityRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [exporting, setExporting] = useState(false);
   const [page, setPage] = useState(1);
   const [filterAction, setFilterAction] = useState('');
   const [filterDateFrom, setFilterDateFrom] = useState('');
@@ -215,6 +243,19 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
 
   const handlePrint = () => window.print();
 
+  const handleExportCsv = async () => {
+    setExporting(true);
+    try {
+      const allItems = await fetchAllMatchingActivity(sessionId);
+      exportCsv(allItems);
+      addToast('success', `Exported ${allItems.length.toLocaleString()} activity records.`);
+    } catch {
+      addToast('error', 'Failed to export the full activity log.');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div style={{ padding: 28 }}>
       {/* Print header (hidden on screen) */}
@@ -239,8 +280,8 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={() => exportCsv(result.items)} style={btnStyle('secondary')}>
-            ⬇ Export CSV
+          <button onClick={() => void handleExportCsv()} style={btnStyle('secondary')} disabled={exporting}>
+            {exporting ? 'Exporting...' : '⬇ Export CSV'}
           </button>
           <button onClick={handlePrint} style={btnStyle('secondary')}>
             🖨 Print
@@ -305,7 +346,7 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--bg-hover)', borderBottom: '1px solid var(--border)' }}>
-                  {['Timestamp', 'User', 'Action', 'Detail'].map((h) => (
+                  {['Timestamp', 'Action', 'Detail'].map((h) => (
                     <th key={h} style={thStyle()}>{h}</th>
                   ))}
                 </tr>
@@ -313,13 +354,13 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={4} style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}>
+                    <td colSpan={3} style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}>
                       Loading…
                     </td>
                   </tr>
                 ) : result.items.length === 0 ? (
                   <tr>
-                    <td colSpan={4} style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}>
+                    <td colSpan={3} style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}>
                       No activity records found
                     </td>
                   </tr>
@@ -328,9 +369,6 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
                     <tr key={a.id} style={{ borderBottom: '1px solid var(--border)' }}>
                       <td style={{ ...tdStyle(), color: 'var(--text-secondary)', whiteSpace: 'nowrap', fontSize: 12 }}>
                         {fmtDateTime(a.created_at)}
-                      </td>
-                      <td style={{ ...tdStyle(), fontWeight: 500 }}>
-                        {a.username ?? <span style={{ color: 'var(--text-secondary)', fontStyle: 'italic' }}>system</span>}
                       </td>
                       <td style={tdStyle()}>
                         <span

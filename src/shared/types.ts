@@ -85,8 +85,6 @@ export interface FileRecord {
   sha256: string;
   shelf_id: string;
   shelf_name: string;
-  uploaded_by: string;
-  uploader_name: string;
   is_encrypted: boolean;
   created_at: string;
   updated_at: string;
@@ -162,6 +160,39 @@ export interface DashboardStats {
   recent_activity: ActivityRecord[];
   file_ops_7d: Array<{ date: string; uploads: number; downloads: number; failures: number }>;
 }
+
+/** Security tab integrity-focused aggregates. */
+export interface SecurityIntegrityStats {
+  total_files: number;
+  encrypted_files: number;
+  unencrypted_files: number;
+  pending_uploads: number;
+  failed_uploads_24h: number;
+  failed_uploads_7d: number;
+  storage_used_bytes: number;
+  storage_quota_bytes: number;
+  storage_used_percent: number;
+  lockout_events_24h: number;
+  last_backup_at: string | null;
+  upload_failures_by_reason: Array<{ reason: string; count: number }>;
+  threat_activity_by_hour: Array<{ hour: string; count: number }>;
+  critical_events: ActivityRecord[];
+}
+
+/** Configurable thresholds used to color security integrity cards. */
+export interface SecurityThresholdSettings {
+  storage_warn_percent: number;
+  storage_danger_percent: number;
+  upload_fail_warn_24h: number;
+  upload_fail_danger_24h: number;
+}
+
+export const DEFAULT_SECURITY_THRESHOLD_SETTINGS: SecurityThresholdSettings = {
+  storage_warn_percent: 75,
+  storage_danger_percent: 90,
+  upload_fail_warn_24h: 1,
+  upload_fail_danger_24h: 5,
+};
 
 /** Generic paginated result wrapper. */
 export interface PaginatedResult<T> {

@@ -5,6 +5,8 @@ import { BrowserWindow } from 'electron';
 import path from 'node:path';
 
 export function createMainWindow(): BrowserWindow {
+  const isDev = process.env['NODE_ENV'] === 'development';
+
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
@@ -28,13 +30,20 @@ export function createMainWindow(): BrowserWindow {
   win.removeMenu();
 
   // In development, load from dev server; in production, load bundled HTML
-  const isDev = process.env['NODE_ENV'] === 'development';
   if (isDev) {
     void win.loadURL('http://localhost:3000');
     win.webContents.openDevTools();
   } else {
     void win.loadFile(path.join(__dirname, '..', '..', 'renderer', 'renderer', 'index.html'));
   }
+
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (event, url) => {
+    const allowed = isDev ? url.startsWith('http://localhost:3000') : url.startsWith('file://');
+    if (!allowed) {
+      event.preventDefault();
+    }
+  });
 
   // Show window after content is loaded
   win.once('ready-to-show', () => {

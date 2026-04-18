@@ -11,6 +11,8 @@ import type {
   ActivityRecord,
   StorageStats,
   DashboardStats,
+  SecurityIntegrityStats,
+  SecurityThresholdSettings,
   SessionInfo,
   PaginatedResult,
   FileUploadResult,
@@ -52,6 +54,12 @@ declare global {
 
       dashboard: {
         stats(sessionId: string): Promise<IpcResponse<DashboardStats>>;
+        securityIntegrityStats(sessionId: string): Promise<IpcResponse<SecurityIntegrityStats>>;
+        getSecurityThresholdSettings(sessionId: string): Promise<IpcResponse<SecurityThresholdSettings>>;
+        setSecurityThresholdSettings(
+          sessionId: string,
+          settings: SecurityThresholdSettings,
+        ): Promise<IpcResponse<SecurityThresholdSettings>>;
       };
 
       files: {

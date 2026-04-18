@@ -9,7 +9,9 @@ flowchart TB
   end
   
   U -->|1. Login & File Ops| P0
+  U -->|1b. Security Threshold Settings| P0
   P0 -->|2. Session & Auth Data| U
+  P0 -->|2b. Security Alerts & Severity| U
   P0 -->|3. Activity Logs| SM
   SM -->|4. Backup Trigger| P0
   P0 -->|5. Encrypted Files| SM

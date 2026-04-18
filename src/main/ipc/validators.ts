@@ -71,6 +71,39 @@ export const SessionIdOnlySchema = z.object({
   sessionId: z.string().uuid('Invalid session ID'),
 });
 
+export const SecurityIntegrityStatsSchema = z.object({
+  sessionId: z.string().uuid('Invalid session ID'),
+});
+
+export const SecurityThresholdGetSchema = z.object({
+  sessionId: z.string().uuid('Invalid session ID'),
+});
+
+export const SecurityThresholdSetSchema = z.object({
+  sessionId: z.string().uuid('Invalid session ID'),
+  settings: z.object({
+    storage_warn_percent: z.number().min(1).max(99),
+    storage_danger_percent: z.number().min(1).max(100),
+    upload_fail_warn_24h: z.number().int().min(0).max(1000),
+    upload_fail_danger_24h: z.number().int().min(0).max(1000),
+  }).superRefine((value, ctx) => {
+    if (value.storage_warn_percent >= value.storage_danger_percent) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['storage_warn_percent'],
+        message: 'Storage warning threshold must be lower than danger threshold',
+      });
+    }
+    if (value.upload_fail_warn_24h > value.upload_fail_danger_24h) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['upload_fail_warn_24h'],
+        message: 'Upload warning threshold must be less than or equal to danger threshold',
+      });
+    }
+  }),
+});
+
 export const FileListSchema = z.object({
   sessionId: z.string().uuid(),
   shelfId: z.string().uuid().optional(),

@@ -2,7 +2,7 @@
  * File Browser page.
  *
  * Paginated, searchable, filterable file table. Supports upload (Electron dialog),
- * download, move to shelf, and delete. Shelf filter shown in a left column. Selection
+ * download, move to folder, and delete. Folder filter shown in a left column. Selection
  * supports bulk operations.
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
@@ -28,15 +28,11 @@ interface Props {
 }
 
 const PAGE_SIZE = 25;
-const ENCRYPT_BEFORE_UPLOAD_PROMPT = 'Encrypt this file before uploading?';
-
-export type UploadEncryptionDecision = 'yes' | 'no' | 'cancel';
-
-export function requestUploadEncryptionDecision(
-  promptFn: (message: string) => UploadEncryptionDecision,
-): UploadEncryptionDecision {
-  return promptFn(ENCRYPT_BEFORE_UPLOAD_PROMPT);
-}
+const PREVIEW_MODAL_DEFAULT_WIDTH = 900;
+const PREVIEW_MODAL_DEFAULT_HEIGHT = 720;
+const PREVIEW_MODAL_MIN_WIDTH = 420;
+const PREVIEW_MODAL_MIN_HEIGHT = 360;
+const PREVIEW_MODAL_VIEWPORT_MARGIN = 24;
 
 export function validateEncryptionPasswords(password: string, confirmPassword: string): string | null {
   if (!password.trim()) return 'Encryption password is required.';
@@ -56,7 +52,7 @@ function fmtDate(ts: string): string {
 }
 
 // ────────────────────────────────────────
-// Move-to-shelf modal
+// Move-to-folder modal
 // ────────────────────────────────────────
 
 function MoveModal({
@@ -83,7 +79,7 @@ function MoveModal({
     >
       <div style={{ ...cardStyle(), width: 360 }}>
         <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16, color: 'var(--text-primary)' }}>
-          Move to Shelf
+          Move to Folder
         </h3>
         <select
           value={selected}
@@ -118,7 +114,13 @@ function MoveModal({
   );
 }
 
-function OverlayModal({ children }: { children: React.ReactNode }) {
+function OverlayModal({
+  children,
+  modalStyle,
+}: {
+  children: React.ReactNode;
+  modalStyle?: React.CSSProperties;
+}) {
   const modal = (
     <div
       style={{
@@ -132,7 +134,7 @@ function OverlayModal({ children }: { children: React.ReactNode }) {
       }}
     >
       <div
-        style={{ ...cardStyle(), width: 460, maxWidth: '92vw' }}
+        style={{ ...cardStyle(), width: 460, maxWidth: '92vw', position: 'relative', ...modalStyle }}
         onMouseDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
       >
@@ -172,7 +174,6 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const [moveModal, setMoveModal] = useState<string[] | null>(null);
   const [newShelfName, setNewShelfName] = useState('');
   const [addingShelf, setAddingShelf] = useState(false);
-  const [showUploadEncryptModal, setShowUploadEncryptModal] = useState(false);
   const [showUploadPasswordModal, setShowUploadPasswordModal] = useState(false);
   const [pendingUploadMode, setPendingUploadMode] = useState<SourceHandlingMode>('keep_original');
   const [uploadPasswordError, setUploadPasswordError] = useState<string | null>(null);
@@ -189,6 +190,35 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const [convertedHtml, setConvertedHtml] = useState<string | null>(null);
   const [conversionLoading, setConversionLoading] = useState(false);
   const [conversionError, setConversionError] = useState<string | null>(null);
+  const [pdfPage, setPdfPage] = useState(1);
+  const [pdfTotalPages, setPdfTotalPages] = useState(1);
+  const [embeddedLinkUrl, setEmbeddedLinkUrl] = useState<string | null>(null);
+  const [previewModalSize, setPreviewModalSize] = useState({
+    width: PREVIEW_MODAL_DEFAULT_WIDTH,
+    height: PREVIEW_MODAL_DEFAULT_HEIGHT,
+  });
+  const resizeStartRef = useRef<{
+    mouseX: number;
+    mouseY: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [isResizingPreview, setIsResizingPreview] = useState(false);
+
+  const clampPreviewSize = useCallback((width: number, height: number) => {
+    const maxWidth = Math.max(
+      PREVIEW_MODAL_MIN_WIDTH,
+      window.innerWidth - PREVIEW_MODAL_VIEWPORT_MARGIN,
+    );
+    const maxHeight = Math.max(
+      PREVIEW_MODAL_MIN_HEIGHT,
+      window.innerHeight - PREVIEW_MODAL_VIEWPORT_MARGIN,
+    );
+    return {
+      width: Math.min(maxWidth, Math.max(PREVIEW_MODAL_MIN_WIDTH, Math.round(width))),
+      height: Math.min(maxHeight, Math.max(PREVIEW_MODAL_MIN_HEIGHT, Math.round(height))),
+    };
+  }, []);
 
   const loadShelves = useCallback(async () => {
     const res = await window.sccfs.shelves.list(sessionId);
@@ -278,31 +308,113 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   }, [viewer, previewKind]);
 
   useEffect(() => {
+    if (!viewer || previewKind !== 'pdf') {
+      setPdfPage(1);
+      setPdfTotalPages(1);
+      return;
+    }
+    setPdfPage(1);
+  }, [viewer, previewKind]);
+
+  useEffect(() => {
+    setEmbeddedLinkUrl(null);
+  }, [viewer, previewKind]);
+
+  useEffect(() => {
+    if (!viewer) return;
+    setPreviewModalSize(clampPreviewSize(PREVIEW_MODAL_DEFAULT_WIDTH, PREVIEW_MODAL_DEFAULT_HEIGHT));
+  }, [viewer, clampPreviewSize]);
+
+  useEffect(() => {
+    if (!viewer) return;
+    const onResize = () => {
+      setPreviewModalSize((prev) => clampPreviewSize(prev.width, prev.height));
+    };
+    window.addEventListener('resize', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+    };
+  }, [viewer, clampPreviewSize]);
+
+  useEffect(() => {
+    if (!isResizingPreview) return;
+
+    const onMouseMove = (event: MouseEvent) => {
+      const start = resizeStartRef.current;
+      if (!start) return;
+      const deltaX = event.clientX - start.mouseX;
+      const deltaY = event.clientY - start.mouseY;
+      setPreviewModalSize(clampPreviewSize(start.width + deltaX, start.height + deltaY));
+    };
+
+    const onMouseUp = () => {
+      resizeStartRef.current = null;
+      setIsResizingPreview(false);
+    };
+
+    const previousUserSelect = document.body.style.userSelect;
+    const previousCursor = document.body.style.cursor;
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'nwse-resize';
+
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+
+    return () => {
+      document.body.style.userSelect = previousUserSelect;
+      document.body.style.cursor = previousCursor;
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [isResizingPreview, clampPreviewSize]);
+
+  useEffect(() => {
     if (!viewer || previewKind !== 'pdf' || !pdfCanvasRef.current) return;
     let cancelled = false;
     const render = async () => {
       try {
-        const { getDocument } = await import('pdfjs-dist/build/pdf.mjs');
+        const pdfModule = await import('pdfjs-dist/legacy/build/pdf.mjs').catch(
+          async () => import('pdfjs-dist/build/pdf.mjs'),
+        );
+        const { getDocument, GlobalWorkerOptions } = pdfModule;
+        if (!GlobalWorkerOptions.workerSrc) {
+          GlobalWorkerOptions.workerSrc = './pdf.worker.mjs';
+        }
         const bytes = decodeBase64ToBytes(viewer.contentBase64);
         const doc = await getDocument({ data: bytes, disableWorker: true }).promise;
-        const page1 = await doc.getPage(1);
-        const viewport = page1.getViewport({ scale: 1.25 });
+        if (cancelled) return;
+
+        if (!doc.numPages || doc.numPages < 1) {
+          throw new Error('The PDF has no readable pages.');
+        }
+
+        setPdfTotalPages(doc.numPages);
+        const currentPage = Math.min(Math.max(1, pdfPage), doc.numPages);
+        if (currentPage !== pdfPage) {
+          setPdfPage(currentPage);
+          return;
+        }
+
+        const pdfPageData = await doc.getPage(currentPage);
+        const viewport = pdfPageData.getViewport({ scale: 1.25 });
         const canvas = pdfCanvasRef.current;
         if (!canvas || cancelled) return;
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
         canvas.width = viewport.width;
         canvas.height = viewport.height;
-        await page1.render({ canvasContext: ctx, viewport }).promise;
-      } catch {
-        addToast('error', 'Unable to render PDF preview.');
+        await pdfPageData.render({ canvasContext: ctx, viewport }).promise;
+      } catch (error) {
+        console.error('PDF preview render failed', error);
+        const message = error instanceof Error ? error.message : 'Unknown PDF error';
+        addToast('error', `Unable to render PDF preview: ${message}`);
       }
     };
     void render();
     return () => {
       cancelled = true;
     };
-  }, [viewer, previewKind, addToast]);
+  }, [viewer, previewKind, pdfPage, addToast]);
 
   useEffect(() => {
     if (!showUploadPasswordModal) return;
@@ -368,7 +480,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
 
   const handleUpload = async () => {
     if (!selectedShelf) {
-      addToast('warning', 'Select a shelf before uploading');
+      addToast('warning', 'Select a folder before uploading');
       return;
     }
     let effectiveMode = sourceHandlingMode;
@@ -377,7 +489,10 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       effectiveMode = shouldMove ? 'move_to_system' : 'keep_original';
     }
     setPendingUploadMode(effectiveMode);
-    setShowUploadEncryptModal(true);
+    if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
+    if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
+    setUploadPasswordError(null);
+    setShowUploadPasswordModal(true);
   };
 
   const handleDownload = async (fileId: string, name: string, encrypted: boolean) => {
@@ -403,22 +518,6 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     setDecryptPrompt({ fileId, name, mode: 'view' });
     setDecryptionPassword('');
     setDecryptionError(null);
-  };
-
-  const handleUploadDecision = async (decision: UploadEncryptionDecision) => {
-    setShowUploadEncryptModal(false);
-    if (decision === 'cancel') {
-      addToast('info', 'Upload cancelled before processing.');
-      return;
-    }
-    if (decision === 'no') {
-      await performUpload(false);
-      return;
-    }
-    if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
-    if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
-    setUploadPasswordError(null);
-    setShowUploadPasswordModal(true);
   };
 
   const handleSubmitUploadPassword = async () => {
@@ -479,6 +578,9 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const closeViewer = async () => {
     if (!viewer) return;
     const viewId = viewer.viewId;
+    setEmbeddedLinkUrl(null);
+    setPdfPage(1);
+    setPdfTotalPages(1);
     setViewer(null);
     const cleanupRes = await window.sccfs.files.cleanupEncryptedView(sessionId, viewId);
     if (cleanupRes.ok && cleanupRes.data.deleted) {
@@ -524,25 +626,25 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     if (!newShelfName.trim()) return;
     const res = await window.sccfs.shelves.create(sessionId, newShelfName.trim());
     if (res.ok) {
-      addToast('success', `Shelf "${res.data.name}" created`);
+      addToast('success', `Folder "${res.data.name}" created`);
       setNewShelfName('');
       setAddingShelf(false);
       loadShelves();
     } else {
-      addToast('error', res.error?.message ?? 'Failed to create shelf');
+      addToast('error', res.error?.message ?? 'Failed to create folder');
     }
   };
 
   const handleDeleteShelf = async (shelfId: string, name: string) => {
-    if (!confirm(`Delete shelf "${name}"? Files will be moved to Inbox.`)) return;
+    if (!confirm(`Delete folder "${name}"? Files will be moved to Inbox.`)) return;
     const res = await window.sccfs.shelves.delete(sessionId, shelfId);
     if (res.ok) {
-      addToast('success', `Shelf "${name}" deleted`);
+      addToast('success', `Folder "${name}" deleted`);
       if (selectedShelf === shelfId) setSelectedShelf(undefined);
       loadShelves();
       loadFiles();
     } else {
-      addToast('error', res.error?.message ?? 'Failed to delete shelf');
+      addToast('error', res.error?.message ?? 'Failed to delete folder');
     }
   };
 
@@ -566,10 +668,49 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const totalPages = Math.max(1, Math.ceil(files.total / PAGE_SIZE));
 
   const selectedIds = [...selected];
+  const startPreviewResize = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resizeStartRef.current = {
+      mouseX: event.clientX,
+      mouseY: event.clientY,
+      width: previewModalSize.width,
+      height: previewModalSize.height,
+    };
+    setIsResizingPreview(true);
+  };
+
+  const handleConvertedLinkClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const anchor = target.closest('a');
+    if (!(anchor instanceof HTMLAnchorElement)) return;
+
+    event.preventDefault();
+
+    const href = anchor.getAttribute('href') ?? '';
+    if (!href) return;
+
+    let parsed: URL;
+    try {
+      parsed = new URL(href, window.location.href);
+    } catch {
+      addToast('warning', 'Invalid link in document preview.');
+      return;
+    }
+
+    const protocol = parsed.protocol.toLowerCase();
+    if (protocol !== 'http:' && protocol !== 'https:') {
+      addToast('warning', 'Only HTTP/HTTPS links are allowed in preview.');
+      return;
+    }
+
+    setEmbeddedLinkUrl(parsed.toString());
+  };
 
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
-      {/* Shelves sidebar */}
+      {/* Folders sidebar */}
       <div
         style={{
           width: 200,
@@ -590,7 +731,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             marginBottom: 8,
           }}
         >
-          Shelves
+          Folders
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 10 }}>
           Signed in as {user.username}
@@ -660,7 +801,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             {!s.is_system && (
               <button
                 onClick={() => handleDeleteShelf(s.id, s.name)}
-                title="Delete shelf"
+                title="Delete folder"
                 style={{
                   background: 'none',
                   border: 'none',
@@ -684,7 +825,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                 value={newShelfName}
                 onChange={(e) => setNewShelfName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === 'Enter') handleCreateShelf(); if (e.key === 'Escape') setAddingShelf(false); }}
-                placeholder="Shelf name"
+                placeholder="Folder name"
                 style={{
                   width: '100%',
                   padding: '6px 8px',
@@ -719,7 +860,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                 fontSize: 12,
               }}
             >
-              + New Shelf
+              + New Folder
             </button>
           )}
         </div>
@@ -845,11 +986,10 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                     />
                   </th>
                   <th style={thStyle()}>Name</th>
-                  <th style={thStyle(100)}>Shelf</th>
+                  <th style={thStyle(100)}>Folder</th>
                   <th style={thStyle(90)}>Size</th>
                   <th style={thStyle(60)}>Enc.</th>
                   <th style={thStyle(130)}>Uploaded</th>
-                  <th style={thStyle(90)}>By</th>
                   <th style={thStyle(120)}>Actions</th>
                 </tr>
               </thead>
@@ -857,7 +997,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={8}
+                      colSpan={7}
                       style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}
                     >
                       Loading…
@@ -866,10 +1006,10 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                 ) : files.items.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={8}
+                      colSpan={7}
                       style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}
                     >
-                      {search ? 'No files match your search' : 'No files in this shelf yet'}
+                      {search ? 'No files match your search' : 'No files in this folder yet'}
                     </td>
                   </tr>
                 ) : (
@@ -927,9 +1067,6 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                       </td>
                       <td style={{ ...tdStyle(130), color: 'var(--text-secondary)', fontSize: 12 }}>
                         {fmtDate(f.created_at)}
-                      </td>
-                      <td style={{ ...tdStyle(90), color: 'var(--text-secondary)', fontSize: 12 }}>
-                        {f.uploader_name}
                       </td>
                       <td style={tdStyle(120)}>
                         <div style={{ display: 'flex', gap: 4 }}>
@@ -1013,24 +1150,11 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
           onCancel={() => setMoveModal(null)}
         />
       )}
-      {showUploadEncryptModal && (
-        <OverlayModal>
-          <h3 style={{ marginTop: 0, marginBottom: 12 }}>Upload Confirmation</h3>
-          <p style={{ marginTop: 0, marginBottom: 18, color: 'var(--text-secondary)', fontSize: 13 }}>
-            Encrypt this file before uploading?
-          </p>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button onClick={() => void handleUploadDecision('cancel')} style={btnStyle('secondary', true)}>Cancel</button>
-            <button onClick={() => void handleUploadDecision('no')} style={btnStyle('ghost', true)}>No</button>
-            <button onClick={() => void handleUploadDecision('yes')} style={btnStyle('primary', true)}>Yes</button>
-          </div>
-        </OverlayModal>
-      )}
       {showUploadPasswordModal && (
         <OverlayModal>
-          <h3 style={{ marginTop: 0, marginBottom: 12 }}>Encryption Password</h3>
+          <h3 style={{ marginTop: 0, marginBottom: 12 }}>Set Encryption Password</h3>
           <p style={{ marginTop: 0, marginBottom: 12, color: 'var(--text-secondary)', fontSize: 13 }}>
-            Enter and confirm the password used to encrypt this upload.
+            Enter and confirm the password to encrypt this upload.
           </p>
           <input
             ref={uploadPasswordRef}
@@ -1121,44 +1245,130 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
         </OverlayModal>
       )}
       {viewer && (
-        <OverlayModal>          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
-            <h3 style={{ margin: 0 }}>Secure In-App Viewer</h3>
-            <button onClick={() => void closeViewer()} style={btnStyle('secondary', true)}>Close</button>
-          </div>
-          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>{viewer.fileName}</div>
-          <div style={{ marginTop: 14, maxHeight: '70vh', overflow: 'auto', border: '1px solid var(--border)', borderRadius: 6, padding: 10 }}>
-            {previewKind === 'pdf' && <canvas ref={pdfCanvasRef} style={{ maxWidth: '100%', display: 'block' }} />}
-            {previewKind === 'image' && <img alt={viewer.fileName} src={viewerDataUrl} style={{ maxWidth: '100%', maxHeight: '65vh' }} />}
-            {previewKind === 'text' && <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{viewerTextContent}</pre>}
-            {previewKind === 'audio' && <audio controls src={viewerDataUrl} style={{ width: '100%' }} />}
-            {previewKind === 'video' && <video controls src={viewerDataUrl} style={{ width: '100%', maxHeight: '65vh' }} />}
-            {isConvertedKind(previewKind) && conversionLoading && (
-              <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Converting document...</div>
-            )}
-            {isConvertedKind(previewKind) && conversionError && (
-              <div style={{ color: 'var(--danger)', fontSize: 13 }}>
-                {conversionError}
+        <OverlayModal
+          modalStyle={{
+            width: previewModalSize.width,
+            height: previewModalSize.height,
+            maxWidth: '92vw',
+            maxHeight: '90vh',
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+              <h3 style={{ margin: 0 }}>Secure In-App Viewer</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {previewKind === 'pdf' && (
+                  <>
+                    <button
+                      onClick={() => setPdfPage((prev) => Math.max(1, prev - 1))}
+                      disabled={pdfPage <= 1}
+                      style={btnStyle('secondary', true)}
+                    >
+                      Prev
+                    </button>
+                    <span style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 84, textAlign: 'center' }}>
+                      Page {pdfPage}/{pdfTotalPages}
+                    </span>
+                    <button
+                      onClick={() => setPdfPage((prev) => Math.min(pdfTotalPages, prev + 1))}
+                      disabled={pdfPage >= pdfTotalPages}
+                      style={btnStyle('secondary', true)}
+                    >
+                      Next
+                    </button>
+                  </>
+                )}
+                <button onClick={() => void closeViewer()} style={btnStyle('secondary', true)}>Close</button>
               </div>
-            )}
-            {conversionSettled && convertedHtml && (
-              <div
-                style={{ fontSize: 13, color: 'var(--text-primary)' }}
-                dangerouslySetInnerHTML={{ __html: convertedHtml }}
-              />
-            )}
-            {conversionSettled && !convertedHtml && (
-              <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
-                This file type is not supported for in-app preview. Please use Download to access the file.
+            </div>
+            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>{viewer.fileName}</div>
+            <div style={{ marginTop: 14, flex: 1, minHeight: 220, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 6, padding: 10 }}>
+            {embeddedLinkUrl ? (
+              <div style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      onClick={() => setEmbeddedLinkUrl(null)}
+                      style={btnStyle('secondary', true)}
+                    >
+                      Back to Document
+                    </button>
+                    <button
+                      onClick={() => setEmbeddedLinkUrl(null)}
+                      style={btnStyle('ghost', true)}
+                    >
+                      Close Link
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-secondary)', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {embeddedLinkUrl}
+                  </div>
+                </div>
+                <iframe
+                  title="Preview Link"
+                  src={embeddedLinkUrl}
+                  sandbox="allow-same-origin allow-scripts allow-forms allow-popups"
+                  referrerPolicy="no-referrer"
+                  style={{ width: '100%', flex: 1, minHeight: 240, border: '1px solid var(--border)', borderRadius: 6, background: '#fff' }}
+                />
               </div>
+            ) : (
+              <>
+                {previewKind === 'pdf' && <canvas ref={pdfCanvasRef} style={{ maxWidth: '100%', display: 'block' }} />}
+                {previewKind === 'image' && <img alt={viewer.fileName} src={viewerDataUrl} style={{ maxWidth: '100%', maxHeight: '100%' }} />}
+                {previewKind === 'text' && <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{viewerTextContent}</pre>}
+                {previewKind === 'audio' && <audio controls src={viewerDataUrl} style={{ width: '100%' }} />}
+                {previewKind === 'video' && <video controls src={viewerDataUrl} style={{ width: '100%', maxHeight: '100%' }} />}
+                {isConvertedKind(previewKind) && conversionLoading && (
+                  <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Converting document...</div>
+                )}
+                {isConvertedKind(previewKind) && conversionError && (
+                  <div style={{ color: 'var(--danger)', fontSize: 13 }}>
+                    {conversionError}
+                  </div>
+                )}
+                {conversionSettled && convertedHtml && (
+                  <div
+                    onClick={handleConvertedLinkClick}
+                    style={{ fontSize: 13, color: 'var(--text-primary)' }}
+                    dangerouslySetInnerHTML={{ __html: convertedHtml }}
+                  />
+                )}
+                {conversionSettled && !convertedHtml && (
+                  <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                    This file type is not supported for in-app preview. Please use Download to access the file.
+                  </div>
+                )}
+                {(previewKind === 'fallback') && (
+                  <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
+                    This file type is not supported for in-app preview. Please use Download to access the file.
+                  </div>
+                )}
+              </>
             )}
-            {(previewKind === 'fallback') && (
-              <div style={{ color: 'var(--text-secondary)', fontSize: 13 }}>
-                This file type is not supported for in-app preview. Please use Download to access the file.
-              </div>
-            )}
-          </div>
-          <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-secondary)' }}>
-            A temporary decrypted copy used for preview is auto-deleted in about {Math.round(viewer.cleanupAfterMs / 1000)} seconds.
+            </div>
+            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+              A temporary decrypted copy used for preview is auto-deleted in about {Math.round(viewer.cleanupAfterMs / 1000)} seconds.
+            </div>
+            <div style={{ marginTop: 2, fontSize: 12, color: 'var(--text-secondary)' }}>
+              Note: this is preview only. Original file format may be different when downloaded.
+            </div>
+            <div
+              role="presentation"
+              onMouseDown={startPreviewResize}
+              title="Drag to resize"
+              style={{
+                position: 'absolute',
+                width: 14,
+                height: 14,
+                right: 8,
+                bottom: 8,
+                cursor: 'nwse-resize',
+                borderRight: '2px solid var(--text-secondary)',
+                borderBottom: '2px solid var(--text-secondary)',
+                opacity: 0.7,
+              }}
+            />
           </div>
         </OverlayModal>
       )}

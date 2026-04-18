@@ -11,6 +11,9 @@ import { DashboardService } from '../services/dashboard.service';
 import { AuthError } from '../services/auth.service';
 import {
   SessionIdOnlySchema,
+  SecurityIntegrityStatsSchema,
+  SecurityThresholdGetSchema,
+  SecurityThresholdSetSchema,
   FileListSchema,
   FileUploadSchema,
   FileDownloadSchema,
@@ -58,6 +61,9 @@ const passthroughGuard: InvokeGuard = async <T>(invoke: () => Promise<IpcRespons
 
 const DASHBOARD_CHANNELS = [
   IPC_CHANNELS.DASHBOARD_STATS,
+  IPC_CHANNELS.SECURITY_INTEGRITY_STATS,
+  IPC_CHANNELS.SECURITY_THRESHOLD_GET,
+  IPC_CHANNELS.SECURITY_THRESHOLD_SET,
   IPC_CHANNELS.FILES_LIST,
   IPC_CHANNELS.FILES_UPLOAD,
   IPC_CHANNELS.FILES_DOWNLOAD,
@@ -88,6 +94,36 @@ export function registerDashboardHandlers(
       try {
         const { sessionId } = SessionIdOnlySchema.parse(payload);
         return ok(dashboardService.getStats(sessionId));
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
+
+  ipcMain.handle(IPC_CHANNELS.SECURITY_INTEGRITY_STATS, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId } = SecurityIntegrityStatsSchema.parse(payload);
+        return ok(dashboardService.getSecurityIntegrityStats(sessionId));
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
+
+  ipcMain.handle(IPC_CHANNELS.SECURITY_THRESHOLD_GET, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId } = SecurityThresholdGetSchema.parse(payload);
+        return ok(dashboardService.getSecurityThresholdSettings(sessionId));
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
+
+  ipcMain.handle(IPC_CHANNELS.SECURITY_THRESHOLD_SET, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId, settings } = SecurityThresholdSetSchema.parse(payload);
+        return ok(dashboardService.setSecurityThresholdSettings(sessionId, settings));
       } catch (e) {
         return handleError(e);
       }
