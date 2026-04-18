@@ -155,10 +155,10 @@ export class DashboardService {
   // ── Seed system shelves ──────────────
 
   seedSystemShelves(): void {
-    const primaryUser = this.db.prepare('SELECT id FROM users ORDER BY rowid ASC LIMIT 1').get() as
+    const firstUser = this.db.prepare('SELECT id FROM users ORDER BY rowid ASC LIMIT 1').get() as
       | { id: string }
       | undefined;
-    const createdBy = primaryUser?.id ?? null;
+    const createdBy = firstUser?.id ?? null;
 
     for (const name of SYSTEM_SHELVES) {
       const existing = this.db.prepare('SELECT id FROM shelves WHERE name = ?').get(name);

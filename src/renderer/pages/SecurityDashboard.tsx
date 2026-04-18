@@ -4,7 +4,7 @@
  * Shows active sessions, account lockout activity, and password controls
  * relevant to the single-user security model.
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts';
@@ -106,7 +106,10 @@ export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Ele
   };
 
   const now = Date.now();
-  const currentSession = sessions.find((s) => s.sessionId === sessionId);
+  const currentSession = useMemo(
+    () => sessions.find((s) => s.sessionId === sessionId),
+    [sessions, sessionId],
+  );
 
   return (
     <div style={{ padding: 28 }}>
@@ -231,7 +234,7 @@ export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Ele
                 style={{ ...inputStyle, marginBottom: 12 }}
               />
               <p style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 12 }}>
-                Min 8 chars · uppercase · lowercase · digit · special character
+                Min 8 characters · uppercase · lowercase · digit · special character
               </p>
               <button
                 onClick={handleChangePassword}
@@ -280,10 +283,10 @@ export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Ele
               ✅ Current Security Status
             </h2>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              <StatusItem label="Session status" value={currentSession ? 'Active' : 'Expired'} />
-              <StatusItem label="Session ID" value={currentSession ? `${currentSession.sessionId.slice(0, 8)}…` : 'N/A'} />
-              <StatusItem label="Session started" value={currentSession ? fmtTime(currentSession.createdAt) : 'N/A'} />
-              <StatusItem label="Last activity" value={currentSession ? fmtTime(currentSession.lastActivity) : 'N/A'} />
+              <StatusItem label="Session status" value={loading ? 'Loading…' : currentSession ? 'Active' : 'Expired'} />
+              <StatusItem label="Session ID" value={currentSession ? `${currentSession.sessionId.slice(0, 8)}…` : loading ? 'Loading…' : 'N/A'} />
+              <StatusItem label="Session started" value={currentSession ? fmtTime(currentSession.createdAt) : loading ? 'Loading…' : 'N/A'} />
+              <StatusItem label="Last activity" value={currentSession ? fmtTime(currentSession.lastActivity) : loading ? 'Loading…' : 'N/A'} />
             </div>
           </div>
         </>

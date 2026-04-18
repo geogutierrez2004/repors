@@ -148,7 +148,7 @@ function OverlayModal({ children }: { children: React.ReactNode }) {
 // Main component
 // ────────────────────────────────────────
 
-export function FileBrowser({ sessionId, user: _user, addToast }: Props): React.JSX.Element {
+export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Element {
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const uploadPasswordRef = useRef<HTMLInputElement | null>(null);
   const uploadPasswordConfirmRef = useRef<HTMLInputElement | null>(null);
@@ -591,6 +591,9 @@ export function FileBrowser({ sessionId, user: _user, addToast }: Props): React.
           }}
         >
           Shelves
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 10 }}>
+          Signed in as {user.username}
         </div>
 
         <button

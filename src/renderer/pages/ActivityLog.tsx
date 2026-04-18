@@ -160,7 +160,7 @@ function exportCsv(items: ActivityRecord[]) {
 // Main
 // ────────────────────────────────────────
 
-export function ActivityLog({ sessionId, user: _user, addToast }: Props): React.JSX.Element {
+export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Element {
   const [result, setResult] = useState<PaginatedResult<ActivityRecord>>({
     items: [], total: 0, page: 1, pageSize: PAGE_SIZE,
   });
@@ -235,7 +235,7 @@ export function ActivityLog({ sessionId, user: _user, addToast }: Props): React.
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)' }}>Activity Log</h1>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
-            Security and operation audit trail
+            Security and operation audit trail for {user.username}
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
