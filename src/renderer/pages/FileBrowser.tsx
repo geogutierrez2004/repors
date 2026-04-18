@@ -733,10 +733,6 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
         >
           Folders
         </div>
-        <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 10 }}>
-          Signed in as {user.username}
-        </div>
-
         <button
           onClick={() => { setSelectedShelf(undefined); setPage(1); }}
           style={{
