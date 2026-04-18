@@ -52,12 +52,12 @@ function applyTheme(theme: 'light' | 'dark') {
   }
 }
 
-const NAV_ITEMS: Array<{ id: Page; label: string; icon: string; adminOnly?: boolean }> = [
+const NAV_ITEMS: Array<{ id: Page; label: string; icon: string }> = [
   { id: 'dashboard', label: 'Overview', icon: '🏠' },
   { id: 'files', label: 'Files', icon: '📁' },
   { id: 'activity', label: 'Activity Log', icon: '📊' },
-  { id: 'storage', label: 'Storage & Backup', icon: '💾', adminOnly: true },
-  { id: 'security', label: 'Security', icon: '🔒', adminOnly: true },
+  { id: 'storage', label: 'Storage & Backup', icon: '💾' },
+  { id: 'security', label: 'Security', icon: '🔒' },
 ];
 
 // ────────────────────────────────────────
@@ -334,9 +334,6 @@ export function App(): React.JSX.Element {
     );
   }
 
-  const isAdmin = user.role === 'admin';
-  const visibleNav = NAV_ITEMS.filter((n) => !n.adminOnly || isAdmin);
-
   const sharedProps = { sessionId, user, addToast };
 
   return (
@@ -373,7 +370,7 @@ export function App(): React.JSX.Element {
 
           {/* Nav items */}
           <nav style={{ flex: 1, padding: '0 10px' }}>
-            {visibleNav.map((item) => {
+            {NAV_ITEMS.map((item) => {
               const active = page === item.id;
               return (
                 <button
@@ -412,14 +409,14 @@ export function App(): React.JSX.Element {
               <span
                 style={{
                   fontSize: 10,
-                  background: isAdmin ? 'var(--accent)' : '#334155',
+                  background: '#334155',
                   color: '#fff',
                   borderRadius: 10,
                   padding: '1px 6px',
                   textTransform: 'uppercase',
                 }}
               >
-                {user.role}
+                single-user
               </span>
             </div>
             <div style={{ display: 'flex', gap: 6 }}>
@@ -472,8 +469,8 @@ export function App(): React.JSX.Element {
           {page === 'dashboard' && <Dashboard {...sharedProps} />}
           {page === 'files' && <FileBrowser {...sharedProps} />}
           {page === 'activity' && <ActivityLog {...sharedProps} />}
-          {page === 'storage' && isAdmin && <StorageBackup {...sharedProps} />}
-          {page === 'security' && isAdmin && <SecurityDashboard {...sharedProps} />}
+          {page === 'storage' && <StorageBackup {...sharedProps} />}
+          {page === 'security' && <SecurityDashboard {...sharedProps} />}
         </main>
       </div>
 

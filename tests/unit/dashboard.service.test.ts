@@ -532,4 +532,40 @@ describe('DashboardService file extension handling', () => {
     expect(trashItemMock).not.toHaveBeenCalled();
     expect(fs.existsSync(uploadPath)).toBe(true);
   });
+
+  it('rejects privileged operations when session is invalid', async () => {
+    await expect(
+      dashboard.uploadFile(
+        '00000000-0000-4000-a000-000000000000',
+        shelfId,
+        false,
+        undefined,
+        'keep_original',
+        false,
+        {} as BrowserWindow,
+      ),
+    ).rejects.toMatchObject({ code: 'INVALID_SESSION' });
+
+    try {
+      dashboard.listActiveSessions('00000000-0000-4000-a000-000000000000');
+      expect.fail('Expected INVALID_SESSION');
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'INVALID_SESSION' });
+    }
+  });
+
+  it('blocks terminating your own active session from security dashboard', () => {
+    try {
+      dashboard.terminateSession(sessionId, sessionId);
+      expect.fail('Expected SELF_TERMINATE');
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'SELF_TERMINATE' });
+    }
+  });
+
+  it('allows terminating another active session in single-user mode', async () => {
+    const anotherLogin = await auth.login('fs_adm1', 'admin123');
+    expect(() => dashboard.terminateSession(sessionId, anotherLogin.sessionId)).not.toThrow();
+    expect(auth.validateSession(anotherLogin.sessionId)).toBeNull();
+  });
 });

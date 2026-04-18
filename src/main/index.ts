@@ -3,7 +3,7 @@
  *
  * Responsibilities (spec §2.1):
  * - Own SQLite access, filesystem I/O, encryption/decryption, and IPC handlers
- * - Verify sessions and role permissions on every privileged operation
+ * - Verify authenticated sessions on every privileged operation
  * - Validate IPC payloads (zod) and return normalized error envelopes
  */
 import { app, BrowserWindow } from 'electron';

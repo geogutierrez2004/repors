@@ -17,7 +17,6 @@ import type {
 } from '../../shared/types';
 import { hashPassword, verifyPassword, validatePasswordPolicy } from '../utils/password';
 import { createSession, validateSession, destroySession, destroyUserSessions } from './session.service';
-import { requirePermission, Permission, RbacError } from './rbac.service';
 
 // ────────────────────────────────────────
 // Helpers
@@ -174,8 +173,7 @@ export class AuthService {
   }
 
   listUsers(sessionId: string): SafeUser[] {
-    const session = this.requireAuth(sessionId);
-    requirePermission(session.role, Permission.USER_LIST);
+    this.requireAuth(sessionId);
 
     const rows = this.db.prepare('SELECT * FROM users ORDER BY username').all() as UserRecord[];
     return rows.map(toSafeUser);

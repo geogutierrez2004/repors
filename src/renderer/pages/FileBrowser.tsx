@@ -148,8 +148,7 @@ function OverlayModal({ children }: { children: React.ReactNode }) {
 // Main component
 // ────────────────────────────────────────
 
-export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Element {
-  const isAdmin = user.role === 'admin';
+export function FileBrowser({ sessionId, user: _user, addToast }: Props): React.JSX.Element {
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const uploadPasswordRef = useRef<HTMLInputElement | null>(null);
   const uploadPasswordConfirmRef = useRef<HTMLInputElement | null>(null);
@@ -655,7 +654,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                 {s.file_count} · {fmtBytes(s.total_size_bytes)}
               </span>
             </button>
-            {isAdmin && !s.is_system && (
+            {!s.is_system && (
               <button
                 onClick={() => handleDeleteShelf(s.id, s.name)}
                 title="Delete shelf"
@@ -674,55 +673,53 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
           </div>
         ))}
 
-        {isAdmin && (
-          <div style={{ marginTop: 8 }}>
-            {addingShelf ? (
-              <>
-                <input
-                  autoFocus
-                  value={newShelfName}
-                  onChange={(e) => setNewShelfName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') handleCreateShelf(); if (e.key === 'Escape') setAddingShelf(false); }}
-                  placeholder="Shelf name"
-                  style={{
-                    width: '100%',
-                    padding: '6px 8px',
-                    borderRadius: 5,
-                    border: '1px solid var(--accent)',
-                    fontSize: 12,
-                    background: 'var(--bg-surface)',
-                    color: 'var(--text-primary)',
-                    marginBottom: 4,
-                  }}
-                />
-                <div style={{ display: 'flex', gap: 4 }}>
-                  <button onClick={handleCreateShelf} style={{ ...btnStyle('primary', true), flex: 1 }}>
-                    Add
-                  </button>
-                  <button onClick={() => setAddingShelf(false)} style={{ ...btnStyle('secondary', true), flex: 1 }}>
-                    Cancel
-                  </button>
-                </div>
-              </>
-            ) : (
-              <button
-                onClick={() => setAddingShelf(true)}
+        <div style={{ marginTop: 8 }}>
+          {addingShelf ? (
+            <>
+              <input
+                autoFocus
+                value={newShelfName}
+                onChange={(e) => setNewShelfName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateShelf(); if (e.key === 'Escape') setAddingShelf(false); }}
+                placeholder="Shelf name"
                 style={{
                   width: '100%',
-                  padding: '6px 10px',
-                  borderRadius: 6,
-                  border: '1px dashed var(--border)',
-                  background: 'transparent',
-                  color: 'var(--text-secondary)',
-                  cursor: 'pointer',
+                  padding: '6px 8px',
+                  borderRadius: 5,
+                  border: '1px solid var(--accent)',
                   fontSize: 12,
+                  background: 'var(--bg-surface)',
+                  color: 'var(--text-primary)',
+                  marginBottom: 4,
                 }}
-              >
-                + New Shelf
-              </button>
-            )}
-          </div>
-        )}
+              />
+              <div style={{ display: 'flex', gap: 4 }}>
+                <button onClick={handleCreateShelf} style={{ ...btnStyle('primary', true), flex: 1 }}>
+                  Add
+                </button>
+                <button onClick={() => setAddingShelf(false)} style={{ ...btnStyle('secondary', true), flex: 1 }}>
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : (
+            <button
+              onClick={() => setAddingShelf(true)}
+              style={{
+                width: '100%',
+                padding: '6px 10px',
+                borderRadius: 6,
+                border: '1px dashed var(--border)',
+                background: 'transparent',
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+                fontSize: 12,
+              }}
+            >
+              + New Shelf
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Main area */}
@@ -800,14 +797,12 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                 >
                   📂 Move ({selectedIds.length})
                 </button>
-                {isAdmin && (
-                  <button
-                    onClick={() => handleDelete(selectedIds)}
-                    style={btnStyle('danger', true)}
-                  >
-                    🗑 Delete ({selectedIds.length})
-                  </button>
-                )}
+                <button
+                  onClick={() => handleDelete(selectedIds)}
+                  style={btnStyle('danger', true)}
+                >
+                  🗑 Delete ({selectedIds.length})
+                </button>
               </>
             )}
             <button
@@ -958,15 +953,13 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                           >
                             📂
                           </button>
-                          {isAdmin && (
-                            <button
-                              onClick={() => handleDelete([f.id])}
-                              style={{ ...btnStyle('ghost', true), color: 'var(--danger)' }}
-                              title="Delete"
-                            >
-                              🗑
-                            </button>
-                          )}
+                          <button
+                            onClick={() => handleDelete([f.id])}
+                            style={{ ...btnStyle('ghost', true), color: 'var(--danger)' }}
+                            title="Delete"
+                          >
+                            🗑
+                          </button>
                         </div>
                       </td>
                     </tr>

@@ -11,7 +11,7 @@ export const IPC_CHANNELS = {
   AUTH_CHANGE_PASSWORD: 'sccfs:auth:change-password',
   AUTH_GET_CURRENT_USER: 'sccfs:auth:get-current-user',
 
-  // User management channels (admin only)
+  // User management channels (single-user mode: mostly disabled)
   USERS_LIST: 'sccfs:users:list',
   USERS_CREATE: 'sccfs:users:create',
   USERS_UPDATE: 'sccfs:users:update',
