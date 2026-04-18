@@ -1,4 +1,4 @@
-# Authentication and RBAC Checklist
+# Authentication and Single-User Security Checklist
 
 ## Password Policy
 - [x] Minimum length 8 characters
@@ -31,24 +31,20 @@
 - [x] Destroy session on logout
 - [x] Destroy all sessions when user is deactivated
 
-## RBAC
-- [x] Admin role with full permissions
-- [x] Staff role with limited permissions
-- [x] Permission check on every privileged operation
-- [x] Self-deletion prevention
-
-## User Management (Admin)
-- [x] Create user with role assignment
-- [x] List all users (safe projection)
-- [x] Update user role and active status
-- [x] Delete user (with session cleanup)
-- [x] Reset user password
-- [x] Unlock locked user account
+## Authorization Model (Single User)
+- [x] Authenticated session required for privileged operations
+- [x] No role-based permission matrix
+- [x] No multi-user administration flows
 - [x] Password hash never sent to renderer
+
+## Destructive Action Safeguards
+- [x] Confirmation prompts for destructive operations
+- [x] Self-session termination blocked from security dashboard
+- [x] Sessions invalidated after restore
 
 ## Activity Logging
 - [x] Log login events
 - [x] Log logout events
 - [x] Log password changes
-- [x] Log user management operations
+- [x] Log session termination operations
 - [x] Log account lockouts

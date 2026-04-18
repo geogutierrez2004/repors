@@ -9,7 +9,6 @@ import { IPC_CHANNELS } from '../../shared/ipc-channels';
 import type { IpcResponse } from '../../shared/types';
 import { DashboardService } from '../services/dashboard.service';
 import { AuthError } from '../services/auth.service';
-import { RbacError } from '../services/rbac.service';
 import {
   SessionIdOnlySchema,
   FileListSchema,
@@ -41,9 +40,6 @@ function handleError(e: unknown): IpcResponse {
     return err('VALIDATION_ERROR', 'Invalid request payload', e.errors);
   }
   if (e instanceof AuthError) {
-    return err(e.code, e.message);
-  }
-  if (e instanceof RbacError) {
     return err(e.code, e.message);
   }
   const message = e instanceof Error ? e.message : 'Unknown error';

@@ -17,9 +17,8 @@ import { pipeline } from 'node:stream/promises';
 import { dialog, BrowserWindow, app, shell } from 'electron';
 import { validateSession, listSessions } from './session.service';
 import { destroySession } from './session.service';
-import { requirePermission, Permission } from './rbac.service';
 import { AuthError } from './auth.service';
-import { SYSTEM_SHELVES, STORAGE_CONSTANTS, Role } from '../../shared/constants';
+import { SYSTEM_SHELVES, STORAGE_CONSTANTS } from '../../shared/constants';
 import type {
   FileRecord,
   ShelfRecord,
@@ -156,10 +155,10 @@ export class DashboardService {
   // ── Seed system shelves ──────────────
 
   seedSystemShelves(): void {
-    const admin = this.db.prepare('SELECT id FROM users WHERE role = ? LIMIT 1').get(Role.ADMIN) as
+    const firstUser = this.db.prepare('SELECT id FROM users ORDER BY rowid ASC LIMIT 1').get() as
       | { id: string }
       | undefined;
-    const createdBy = admin?.id ?? null;
+    const createdBy = firstUser?.id ?? null;
 
     for (const name of SYSTEM_SHELVES) {
       const existing = this.db.prepare('SELECT id FROM shelves WHERE name = ?').get(name);
@@ -343,7 +342,6 @@ export class DashboardService {
     win: BrowserWindow,
   ): Promise<FileUploadResult> {
     const session = requireAuth(sessionId);
-    requirePermission(session.role, Permission.FILE_UPLOAD);
 
     // Verify shelf exists
     const shelf = this.db.prepare('SELECT id FROM shelves WHERE id = ?').get(shelfId);
@@ -590,7 +588,6 @@ export class DashboardService {
     win: BrowserWindow,
   ): Promise<void> {
     const session = requireAuth(sessionId);
-    requirePermission(session.role, Permission.FILE_DOWNLOAD);
 
     const fileRow = this.db
       .prepare('SELECT * FROM files WHERE id = ?')
@@ -632,7 +629,6 @@ export class DashboardService {
     decryptionPassword: string,
   ): Promise<SecureTempViewResult> {
     const session = requireAuth(sessionId);
-    requirePermission(session.role, Permission.FILE_DOWNLOAD);
 
     const fileRow = this.db
       .prepare('SELECT * FROM files WHERE id = ?')
@@ -699,7 +695,6 @@ export class DashboardService {
 
   deleteFile(sessionId: string, fileId: string): void {
     const session = requireAuth(sessionId);
-    requirePermission(session.role, Permission.FILE_DELETE);
 
     const fileRow = this.db
       .prepare('SELECT * FROM files WHERE id = ?')
@@ -744,7 +739,6 @@ export class DashboardService {
 
   moveFile(sessionId: string, fileId: string, targetShelfId: string): FileRecord {
     const session = requireAuth(sessionId);
-    requirePermission(session.role, Permission.FILE_UPLOAD);
 
     const fileRow = this.db.prepare('SELECT id, original_name FROM files WHERE id = ?').get(fileId) as
       | { id: string; original_name: string }
@@ -782,7 +776,6 @@ export class DashboardService {
 
   createShelf(sessionId: string, name: string): ShelfRecord {
     const session = requireAuth(sessionId);
-    requirePermission(session.role, Permission.SHELF_CREATE);
 
     const existing = this.db.prepare('SELECT id FROM shelves WHERE name = ? COLLATE NOCASE').get(name);
     if (existing) throw new AuthError('SHELF_EXISTS', 'A shelf with that name already exists');
@@ -801,7 +794,6 @@ export class DashboardService {
 
   deleteShelf(sessionId: string, shelfId: string): void {
     const session = requireAuth(sessionId);
-    requirePermission(session.role, Permission.SHELF_DELETE);
 
     const shelf = this.db.prepare('SELECT * FROM shelves WHERE id = ?').get(shelfId) as
       | { id: string; name: string; is_system: number }
@@ -823,7 +815,6 @@ export class DashboardService {
 
   renameShelf(sessionId: string, shelfId: string, name: string): ShelfRecord {
     const session = requireAuth(sessionId);
-    requirePermission(session.role, Permission.SHELF_CREATE);
 
     const shelf = this.db.prepare('SELECT * FROM shelves WHERE id = ?').get(shelfId) as
       | { id: string; name: string; is_system: number }
@@ -857,16 +848,12 @@ export class DashboardService {
       pageSize: number;
     },
   ): PaginatedResult<ActivityRecord> {
-    const session = requireAuth(sessionId);
+    requireAuth(sessionId);
 
     let where = 'WHERE 1=1';
     const params: unknown[] = [];
 
-    // Staff can only see their own activity
-    if (session.role !== Role.ADMIN) {
-      where += ' AND a.user_id = ?';
-      params.push(session.userId);
-    } else if (opts.userId) {
+    if (opts.userId) {
       where += ' AND a.user_id = ?';
       params.push(opts.userId);
     }
@@ -947,8 +934,7 @@ export class DashboardService {
   }
 
   setQuota(sessionId: string, quotaBytes: number): void {
-    const session = requireAuth(sessionId);
-    requirePermission(session.role, Permission.STORAGE_BACKUP);
+    requireAuth(sessionId);
 
     this.db
       .prepare("INSERT OR REPLACE INTO storage_config (key, value) VALUES ('quota_bytes', ?)")
@@ -959,7 +945,6 @@ export class DashboardService {
 
   async backup(sessionId: string, win: BrowserWindow): Promise<{ path: string }> {
     const session = requireAuth(sessionId);
-    requirePermission(session.role, Permission.STORAGE_BACKUP);
 
     const timestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
     const defaultName = `sccfs-backup-${timestamp}`;
@@ -1026,7 +1011,6 @@ export class DashboardService {
 
   async restore(sessionId: string, win: BrowserWindow): Promise<void> {
     const session = requireAuth(sessionId);
-    requirePermission(session.role, Permission.STORAGE_RESTORE);
 
     const { filePaths, canceled } = await dialog.showOpenDialog(win, {
       title: 'Restore from Backup Folder',
@@ -1086,8 +1070,7 @@ export class DashboardService {
   // ── Sessions (security dashboard) ────
 
   listActiveSessions(sessionId: string): SessionInfo[] {
-    const session = requireAuth(sessionId);
-    requirePermission(session.role, Permission.USER_LIST);
+    requireAuth(sessionId);
 
     const active = listSessions();
     const userIds = [...new Set(active.map((s) => s.userId))];
@@ -1113,7 +1096,6 @@ export class DashboardService {
 
   terminateSession(callerSessionId: string, targetSessionId: string): void {
     const session = requireAuth(callerSessionId);
-    requirePermission(session.role, Permission.USER_UPDATE);
 
     if (callerSessionId === targetSessionId) {
       throw new AuthError('SELF_TERMINATE', 'Cannot terminate your own session from the dashboard');

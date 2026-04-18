@@ -20,10 +20,10 @@ flowchart TD
   SelectFile -->|Download| DownloadFlow["📥 Download"]
   SelectFile -->|Preview| PreviewFlow["👁️ Preview"]
   
-  DownloadFlow --> CheckRBAC1{RBAC<br/>Allowed?}
-  CheckRBAC1 -->|Denied| AccessDenied["🚫 Access Denied"]
-  AccessDenied --> Dashboard
-  CheckRBAC1 -->|Allowed| GetFile["Fetch from D3<br/>Encrypted Payloads"]
+  DownloadFlow --> SessionGuard1{Session<br/>Valid?}
+  SessionGuard1 -->|No| SessionDenied["🚫 Session Invalid"]
+  SessionDenied --> Login
+  SessionGuard1 -->|Yes| GetFile["Fetch from D3<br/>Encrypted Payloads"]
   GetFile --> NeedsPassword{Encrypted?}
   NeedsPassword -->|Yes| PromptPass["Enter Password"]
   PromptPass --> DeriveKey["PBKDF2 Derive Key"]
@@ -38,9 +38,9 @@ flowchart TD
   StreamFile --> LogActivity1["Log Download"]
   LogActivity1 --> Dashboard
   
-  PreviewFlow --> CheckRBAC2{RBAC<br/>Allowed?}
-  CheckRBAC2 -->|Denied| AccessDenied
-  CheckRBAC2 -->|Allowed| FetchEncrypted["Fetch Encrypted File"]
+  PreviewFlow --> SessionGuard2{Session<br/>Valid?}
+  SessionGuard2 -->|No| SessionDenied
+  SessionGuard2 -->|Yes| FetchEncrypted["Fetch Encrypted File"]
   FetchEncrypted --> PreviewNeedsPass{Encrypted?}
   PreviewNeedsPass -->|Yes| PreviewPromptPass["Enter Password"]
   PreviewNeedsPass -->|No| PreviewPlain["Retrieve Plain File"]
@@ -67,9 +67,9 @@ flowchart TD
   LogActivity2 --> Dashboard
   
   UserChoice -->|Upload File| UploadFlow["📤 Upload"]
-  UploadFlow --> CheckRBAC3{RBAC<br/>Allowed?}
-  CheckRBAC3 -->|Denied| AccessDenied
-  CheckRBAC3 -->|Allowed| SelectFile2["Select File"]
+  UploadFlow --> SessionGuard3{Session<br/>Valid?}
+  SessionGuard3 -->|No| SessionDenied
+  SessionGuard3 -->|Yes| SelectFile2["Select File"]
   SelectFile2 --> CheckQuota{Quota<br/>OK?}
   CheckQuota -->|Exceeded| QuotaError["❌ Storage Full"]
   QuotaError --> Dashboard
@@ -116,10 +116,9 @@ flowchart TD
   DisplayLog --> Dashboard
   
   UserChoice -->|Backup/Restore| BackupFlow["💾 Backup/Restore"]
-  BackupFlow --> AdminCheck{Admin?}
-  AdminCheck -->|No| NotAdmin["🚫 Admin Only"]
-  NotAdmin --> Dashboard
-  AdminCheck -->|Yes| BackupAction{Action?}
+  BackupFlow --> SessionGuard4{Session<br/>Valid?}
+  SessionGuard4 -->|No| SessionDenied
+  SessionGuard4 -->|Yes| BackupAction{Action?}
   BackupAction -->|Backup| BackupNow["Export D1,D2,D3<br/>D4,D5,D6,D7"]
   BackupNow --> CompressArchive["Compress Archive"]
   CompressArchive --> SignArchive["HMAC Sign"]

@@ -1,7 +1,7 @@
 /** Application-wide constants */
 export const APP_NAME = 'StClareFilingSystem';
 
-/** Roles in the system. Admin has full access; Staff has limited access. */
+/** Role values retained for schema compatibility in single-user mode. */
 export enum Role {
   ADMIN = 'admin',
   STAFF = 'staff',

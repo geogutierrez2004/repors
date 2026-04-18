@@ -161,8 +161,6 @@ function exportCsv(items: ActivityRecord[]) {
 // ────────────────────────────────────────
 
 export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Element {
-  const isAdmin = user.role === 'admin';
-
   const [result, setResult] = useState<PaginatedResult<ActivityRecord>>({
     items: [], total: 0, page: 1, pageSize: PAGE_SIZE,
   });
@@ -237,7 +235,7 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
         <div>
           <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)' }}>Activity Log</h1>
           <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>
-            {isAdmin ? 'All user activity' : 'Your activity'}
+            Security and operation audit trail for {user.username}
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>

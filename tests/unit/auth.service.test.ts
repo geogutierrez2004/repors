@@ -245,6 +245,25 @@ describe('AuthService', () => {
   // ── Single-user mode ──────────────────
 
   describe('single-user mode restrictions', () => {
+    it('should allow listing users with a valid authenticated session', async () => {
+      await auth.seedDefaultAdmin('fs_adm1', 'admin123');
+      const { sessionId } = await auth.login('fs_adm1', 'admin123');
+      const users = auth.listUsers(sessionId);
+      expect(users).toHaveLength(1);
+      expect(users[0].username).toBe('fs_adm1');
+    });
+
+    it('should reject listing users with an invalid session', async () => {
+      await auth.seedDefaultAdmin('fs_adm1', 'admin123');
+      try {
+        auth.listUsers('00000000-0000-4000-a000-000000000000');
+        expect.fail('Expected INVALID_SESSION');
+      } catch (error) {
+        expect(error).toBeInstanceOf(AuthError);
+        expect((error as AuthError).code).toBe('INVALID_SESSION');
+      }
+    });
+
     it('should reject creating users', async () => {
       await auth.seedDefaultAdmin('fs_adm1', 'admin123');
       const { sessionId } = await auth.login('fs_adm1', 'admin123');
