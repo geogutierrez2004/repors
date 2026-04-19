@@ -122,7 +122,7 @@ export const FileUploadSchema = z.object({
   filePaths: z.array(z.string().min(1)).min(1).optional(),
   stagedFiles: z.array(z.object({
     source_name: z.string().min(1).max(255),
-    mime_type: z.string().max(255).nullable().optional(),
+    mime_type: z.string().max(255).nullable().default(null),
     size_bytes: z.number().int().min(0),
     content_base64: z.string().min(1),
   })).min(1).optional(),
