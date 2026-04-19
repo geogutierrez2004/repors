@@ -180,8 +180,6 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const [showUploadPasswordModal, setShowUploadPasswordModal] = useState(false);
   const [pendingUploadMode, setPendingUploadMode] = useState<SourceHandlingMode>('keep_original');
   const [pendingUploadPaths, setPendingUploadPaths] = useState<string[] | null>(null);
-  const [dragDropActive, setDragDropActive] = useState(false);
-  const [dragDropFilePaths, setDragDropFilePaths] = useState<string[]>([]);
   const [decryptPrompt, setDecryptPrompt] = useState<{ fileId: string; name: string; mode: 'download' | 'view' } | null>(null);
   const [decryptionPassword, setDecryptionPassword] = useState('');
   const [decryptionError, setDecryptionError] = useState<string | null>(null);
@@ -571,98 +569,32 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const handleKeepOriginals = () => {
     setPendingUploadMode('keep_original');
     setShowSourceHandlingModal(false);
-    
-    // If this is from drag-drop, proceed with upload
-    if (dragDropActive) {
-      setUploadLoading(true);
-      void (async () => {
-        const res = await window.sccfs.files.upload(
-          sessionId,
-          selectedShelf,
-          false,
-          undefined,
-          'keep_original',
-          false,
-          dragDropFilePaths,
-        );
-        setUploadLoading(false);
-        setDragDropActive(false);
-        setDragDropFilePaths([]);
-        
-        if (res.ok) {
-          const successes = res.data.files.filter((f) => f.success);
-          const failures = res.data.files.filter((f) => !f.success);
-          const removed = successes.filter((f) => f.removed_original).length;
-          if (successes.length > 0) {
-            addToast(
-              'success',
-              `Standard upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`,
-            );
-          }
-          if (failures.length > 0) {
-            addToast('error', `${failures.length} file(s) failed`);
-          }
-          loadFiles();
-          loadShelves();
-        } else if (res.error?.code !== 'CANCELLED') {
-          addToast('error', res.error?.message ?? 'Upload failed');
-        }
-      })();
-    }
+    const resolve = sourceHandlingModalResolve;
+    setSourceHandlingModalResolve(null);
+    resolve?.('keep_original');
   };
 
   const handleMoveToSystem = () => {
     setPendingUploadMode('move_to_system');
     setShowSourceHandlingModal(false);
-    
-    // If this is from drag-drop, proceed with upload
-    if (dragDropActive) {
-      setUploadLoading(true);
-      void (async () => {
-        const res = await window.sccfs.files.upload(
-          sessionId,
-          selectedShelf,
-          false,
-          undefined,
-          'move_to_system',
-          false,
-          dragDropFilePaths,
-        );
-        setUploadLoading(false);
-        setDragDropActive(false);
-        
-        if (res.ok) {
-          const successes = res.data.files.filter((f) => f.success);
-          const failures = res.data.files.filter((f) => !f.success);
-          const removed = successes.filter((f) => f.removed_original).length;
-          if (successes.length > 0) {
-            addToast(
-              'success',
-              `Standard upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`,
-            );
-          }
-          if (failures.length > 0) {
-            addToast('error', `${failures.length} file(s) failed`);
-          }
-          loadFiles();
-          loadShelves();
-        } else if (res.error?.code !== 'CANCELLED') {
-          addToast('error', res.error?.message ?? 'Upload failed');
-        }
-      })();
-    }
+    const resolve = sourceHandlingModalResolve;
+    setSourceHandlingModalResolve(null);
+    resolve?.('move_to_system');
   };
 
-  const handleUpload = async () => {
+  const beginUploadFlow = async (filePaths?: string[]) => {
     if (!selectedShelf) {
       addToast('warning', 'Select a folder before uploading');
       return;
     }
-    // For regular upload: show file handling modal, then encryption modal, then upload
+
+    setPendingUploadPaths(filePaths && filePaths.length > 0 ? filePaths : null);
+
     if (sourceHandlingMode === 'ask_each_time') {
       await new Promise<void>((resolve) => {
         setSourceHandlingModalResolve(() => (mode: SourceHandlingMode) => {
           setPendingUploadMode(mode);
+          setSourceHandlingModalResolve(null);
           setShowSourceHandlingModal(false);
           resolve();
         });
@@ -671,11 +603,15 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     } else {
       setPendingUploadMode(sourceHandlingMode);
     }
-    // Show encryption password modal
+
     if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
     if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
     setUploadPasswordError(null);
     setShowUploadPasswordModal(true);
+  };
+
+  const handleUpload = async () => {
+    await beginUploadFlow();
   };
 
   const handleDownload = async (fileId: string, name: string, encrypted: boolean) => {
@@ -712,7 +648,13 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       return;
     }
     setShowUploadPasswordModal(false);
-    await performUpload(true, password);
+    const filePaths = pendingUploadPaths;
+    setPendingUploadPaths(null);
+    if (filePaths && filePaths.length > 0) {
+      await performUploadWithPaths(true, password, filePaths);
+    } else {
+      await performUpload(true, password);
+    }
     if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
     if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
     setUploadPasswordError(null);
@@ -968,58 +910,13 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     e.stopPropagation();
     setIsDraggingFiles(false);
 
-    if (!selectedShelf) {
-      addToast('warning', 'Select a folder before uploading');
-      return;
-    }
-
     // Get file paths from the preload's dropped files storage (populated by drop event listener)
     const filePaths = (window as any).getDroppedFiles?.() ?? [];
-    setDragDropFilePaths(filePaths);
-
-    // For drag-drop: set the flag and show file handling modal
-    setDragDropActive(true);
-    
-    if (sourceHandlingMode === 'ask_each_time') {
-      setShowSourceHandlingModal(true);
-    } else {
-      // If already configured, proceed directly
-      setPendingUploadMode(sourceHandlingMode);
-      setUploadLoading(true);
-      void (async () => {
-        const res = await window.sccfs.files.upload(
-          sessionId,
-          selectedShelf,
-          false,
-          undefined,
-          sourceHandlingMode,
-          false,
-          dragDropFilePaths,
-        );
-        setUploadLoading(false);
-        setDragDropActive(false);
-        setDragDropFilePaths([]);
-        
-        if (res.ok) {
-          const successes = res.data.files.filter((f) => f.success);
-          const failures = res.data.files.filter((f) => !f.success);
-          const removed = successes.filter((f) => f.removed_original).length;
-          if (successes.length > 0) {
-            addToast(
-              'success',
-              `Standard upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`,
-            );
-          }
-          if (failures.length > 0) {
-            addToast('error', `${failures.length} file(s) failed`);
-          }
-          loadFiles();
-          loadShelves();
-        } else if (res.error?.code !== 'CANCELLED') {
-          addToast('error', res.error?.message ?? 'Upload failed');
-        }
-      })();
+    if (filePaths.length === 0) {
+      addToast('warning', 'No files were detected from the drop action.');
+      return;
     }
+    void beginUploadFlow(filePaths);
   };
 
   const handleUploadFiles = async (filesToUpload: File[], skipPasswordModal: boolean = false) => {
@@ -1739,6 +1636,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             <button
               onClick={() => {
                 setShowUploadPasswordModal(false);
+                setPendingUploadPaths(null);
                 if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
                 if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
                 setUploadPasswordError(null);
