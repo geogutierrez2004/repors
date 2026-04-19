@@ -536,6 +536,12 @@ export class DashboardService {
         if (!sourceName) {
           throw new AuthError('INVALID_UPLOAD_DATA', 'Invalid staged file name.');
         }
+        if (stagedFile.size_bytes > STORAGE_CONSTANTS.MAX_FILE_SIZE) {
+          throw new AuthError(
+            'FILE_TOO_LARGE',
+            `File exceeds ${STORAGE_CONSTANTS.MAX_FILE_SIZE / (1024 ** 3)} GB limit: ${sourceName}`,
+          );
+        }
         const bytes = decodeBase64Strict(stagedFile.content_base64);
         if (bytes.length !== stagedFile.size_bytes) {
           throw new AuthError('INVALID_UPLOAD_DATA', `Staged file "${sourceName}" size mismatch.`);
