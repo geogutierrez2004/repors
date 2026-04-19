@@ -16,6 +16,7 @@ import type {
   SessionInfo,
   PaginatedResult,
   FileUploadResult,
+  StagedUploadFile,
   SecureTempViewResult,
   SecureTempViewCleanupResult,
   SourceHandlingMode,
@@ -74,6 +75,8 @@ declare global {
           encryptionPassword?: string,
           sourceHandlingMode?: SourceHandlingMode,
           confirmPermanentDelete?: boolean,
+          filePaths?: string[],
+          stagedFiles?: StagedUploadFile[],
         ): Promise<IpcResponse<FileUploadResult>>;
         download(sessionId: string, fileId: string, decryptionPassword?: string): Promise<IpcResponse<null>>;
         viewEncrypted(

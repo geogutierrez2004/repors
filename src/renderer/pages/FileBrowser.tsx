@@ -1,14 +1,20 @@
 /**
  * File Browser page.
  *
- * Paginated, searchable, filterable file table. Supports upload (Electron dialog),
+ * Paginated, searchable, filterable file table. Supports upload (file input + drag/drop),
  * download, move to folder, and delete. Folder filter shown in a left column. Selection
  * supports bulk operations.
  */
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import createDOMPurify from 'dompurify';
-import type { FileRecord, ShelfRecord, PaginatedResult, SourceHandlingMode } from '../../shared/types';
+import type {
+  FileRecord,
+  ShelfRecord,
+  PaginatedResult,
+  SourceHandlingMode,
+  StagedUploadFile,
+} from '../../shared/types';
 import type { AddToast } from '../App';
 import type { SafeUser } from '../../shared/types';
 import { cardStyle, btnStyle } from '../App';
@@ -38,6 +44,23 @@ export function validateEncryptionPasswords(password: string, confirmPassword: s
   if (!password.trim()) return 'Encryption password is required.';
   if (password !== confirmPassword) return 'Encryption passwords do not match.';
   return null;
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Failed to read file.'));
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== 'string') {
+        reject(new Error('Unexpected file reader result.'));
+        return;
+      }
+      const base64 = result.includes(',') ? result.split(',')[1] ?? '' : result;
+      resolve(base64);
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function fmtBytes(b: number): string {
@@ -152,6 +175,7 @@ function OverlayModal({
 
 export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Element {
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const uploadPasswordRef = useRef<HTMLInputElement | null>(null);
   const uploadPasswordConfirmRef = useRef<HTMLInputElement | null>(null);
   const decryptionPasswordRef = useRef<HTMLInputElement | null>(null);
@@ -175,10 +199,13 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const [newShelfName, setNewShelfName] = useState('');
   const [addingShelf, setAddingShelf] = useState(false);
   const [showSourceHandlingModal, setShowSourceHandlingModal] = useState(false);
-  const [sourceHandlingModalResolve, setSourceHandlingModalResolve] = useState<((mode: SourceHandlingMode) => void) | null>(null);
+  const [sourceHandlingModalResolve, setSourceHandlingModalResolve] = useState<((mode: SourceHandlingMode | null) => void) | null>(null);
   const [showUploadPasswordModal, setShowUploadPasswordModal] = useState(false);
+  const [stagedUploadFile, setStagedUploadFile] = useState<StagedUploadFile | null>(null);
   const [pendingUploadMode, setPendingUploadMode] = useState<SourceHandlingMode>('keep_original');
   const [uploadPasswordError, setUploadPasswordError] = useState<string | null>(null);
+  const [isDragOverUploadZone, setIsDragOverUploadZone] = useState(false);
+  const dragDepthRef = useRef(0);
   const [decryptPrompt, setDecryptPrompt] = useState<{ fileId: string; name: string; mode: 'download' | 'view' } | null>(null);
   const [decryptionPassword, setDecryptionPassword] = useState('');
   const [decryptionError, setDecryptionError] = useState<string | null>(null);
@@ -438,70 +465,154 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     };
   }, [decryptPrompt]);
 
-  const performUpload = async (encrypt: boolean, encryptionPassword?: string) => {
+  const resetStagedUpload = useCallback(() => {
+    setStagedUploadFile(null);
+    setUploadPasswordError(null);
+    if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
+    if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
+  }, []);
+
+  const resolveUploadMode = useCallback(async (): Promise<SourceHandlingMode | null> => {
+    return await new Promise<SourceHandlingMode | null>((resolve) => {
+      setSourceHandlingModalResolve(() => (mode: SourceHandlingMode | null) => {
+        setShowSourceHandlingModal(false);
+        resolve(mode);
+      });
+      setShowSourceHandlingModal(true);
+    });
+  }, []);
+
+  const performUpload = useCallback(async (
+    stagedFile: StagedUploadFile,
+    encrypt: boolean,
+    encryptionPassword?: string,
+  ) => {
     if (!selectedShelf) return;
     setUploadLoading(true);
     const effectiveMode = pendingUploadMode;
-    const res = await window.sccfs.files.upload(
-      sessionId,
-      selectedShelf,
-      encrypt,
-      encryptionPassword,
-      effectiveMode,
-      false,
-    );
-    setUploadLoading(false);
-    if (res.ok) {
-      const successes = res.data.files.filter((f) => f.success);
-      const failures = res.data.files.filter((f) => !f.success);
-      const removed = successes.filter((f) => f.removed_original).length;
-      if (successes.length > 0) {
-        addToast(
-          'success',
-          encrypt
-            ? `Encrypted upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`
-            : `Standard upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`,
-        );
-      } else if (res.data.files.length > 0) {
-        addToast('warning', 'Upload completed, but no files were successfully uploaded.');
+    try {
+      const res = await window.sccfs.files.upload(
+        sessionId,
+        selectedShelf,
+        encrypt,
+        encryptionPassword,
+        effectiveMode,
+        false,
+        undefined,
+        [stagedFile],
+      );
+      if (res.ok) {
+        const successes = res.data.files.filter((f) => f.success);
+        const failures = res.data.files.filter((f) => !f.success);
+        const removed = successes.filter((f) => f.removed_original).length;
+        if (successes.length > 0) {
+          addToast(
+            'success',
+            encrypt
+              ? `Encrypted upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`
+              : `Standard upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`,
+          );
+        } else if (res.data.files.length > 0) {
+          addToast('warning', 'Upload completed, but no files were successfully uploaded.');
+        }
+        if (failures.length > 0) {
+          addToast(
+            'error',
+            `${failures.length} file(s) failed: ${failures[0].error?.message ?? 'Upload failed'}`,
+          );
+        }
+        loadFiles();
+        loadShelves();
+        return;
       }
-      if (failures.length > 0) {
-        addToast(
-          'error',
-          `${failures.length} file(s) failed: ${failures[0].error?.message ?? 'Upload failed'}`,
-        );
+      if (res.error?.code !== 'CANCELLED') {
+        addToast('error', res.error?.message ?? 'Upload failed');
       }
-      loadFiles();
-      loadShelves();
-      return;
+    } finally {
+      setUploadLoading(false);
     }
-    if (res.error?.code !== 'CANCELLED') {
-      addToast('error', res.error?.message ?? 'Upload failed');
-    }
-  };
+  }, [addToast, loadFiles, loadShelves, pendingUploadMode, selectedShelf, sessionId]);
 
-  const handleUpload = async () => {
+  // Shared capture pipeline: stage file in memory, then show handling modal, then encryption modal.
+  const handleFileSelected = useCallback(async (file: File) => {
     if (!selectedShelf) {
       addToast('warning', 'Select a folder before uploading');
       return;
     }
-    if (sourceHandlingMode === 'ask_each_time') {
-      // Show modal and wait for user choice
-      await new Promise<void>((resolve) => {
-        setSourceHandlingModalResolve(() => (mode: SourceHandlingMode) => {
-          setPendingUploadMode(mode);
-          setShowSourceHandlingModal(false);
-          resolve();
-        });
-        setShowSourceHandlingModal(true);
-      });
-    } else {
-      setPendingUploadMode(sourceHandlingMode);
+    if (!file) {
+      addToast('warning', 'No files were selected for upload.');
+      return;
     }
-    if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
-    if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
-    setUploadPasswordError(null);
-    setShowUploadPasswordModal(true);
+    try {
+      const staged: StagedUploadFile = {
+        source_name: file.name || 'unnamed-file',
+        mime_type: file.type || null,
+        size_bytes: file.size,
+        content_base64: await readFileAsBase64(file),
+      };
+      if (!staged.content_base64) {
+        addToast('error', 'Failed to stage selected file.');
+        return;
+      }
+      setStagedUploadFile(staged);
+      const mode = await resolveUploadMode();
+      if (!mode) {
+        resetStagedUpload();
+        return;
+      }
+      setPendingUploadMode(mode);
+      setUploadPasswordError(null);
+      if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
+      if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
+      setShowUploadPasswordModal(true);
+    } catch {
+      resetStagedUpload();
+      addToast('error', 'Failed to stage selected file.');
+    }
+  }, [addToast, resolveUploadMode, resetStagedUpload, selectedShelf]);
+
+  const handleUploadButtonClick = () => {
+    uploadInputRef.current?.click();
+  };
+
+  const handleUploadInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file) return;
+    void handleFileSelected(file);
+  };
+
+  const handleDragEnterUploadZone = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current += 1;
+    setIsDragOverUploadZone(true);
+  };
+
+  const handleDragOverUploadZone = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!isDragOverUploadZone) setIsDragOverUploadZone(true);
+  };
+
+  const handleDragLeaveUploadZone = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setIsDragOverUploadZone(false);
+  };
+
+  const handleDropUploadZone = async (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dragDepthRef.current = 0;
+    setIsDragOverUploadZone(false);
+    const droppedFile = event.dataTransfer.files[0];
+    if (!droppedFile) {
+      addToast('error', 'Dropped files could not be resolved. Please use the Upload button.');
+      return;
+    }
+    await handleFileSelected(droppedFile);
   };
 
   const handleDownload = async (fileId: string, name: string, encrypted: boolean) => {
@@ -529,7 +640,18 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     setDecryptionError(null);
   };
 
+  const handleCancelUploadPassword = () => {
+    setShowSourceHandlingModal(false);
+    setShowUploadPasswordModal(false);
+    resetStagedUpload();
+    addToast('info', 'Upload cancelled before processing.');
+  };
+
   const handleSubmitUploadPassword = async () => {
+    if (!stagedUploadFile) {
+      setUploadPasswordError('No file is staged for upload.');
+      return;
+    }
     const password = uploadPasswordRef.current?.value ?? '';
     const confirmPassword = uploadPasswordConfirmRef.current?.value ?? '';
     const validation = validateEncryptionPasswords(password, confirmPassword);
@@ -538,10 +660,8 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       return;
     }
     setShowUploadPasswordModal(false);
-    await performUpload(true, password);
-    if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
-    if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
-    setUploadPasswordError(null);
+    await performUpload(stagedUploadFile, true, password);
+    resetStagedUpload();
   };
 
   const handleSubmitDecryptionPassword = async () => {
@@ -872,7 +992,22 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       </div>
 
       {/* Main area */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          outline: isDragOverUploadZone ? '2px dashed var(--accent)' : '2px dashed transparent',
+          outlineOffset: -2,
+          background: isDragOverUploadZone ? 'rgba(59, 130, 246, 0.08)' : undefined,
+          transition: 'outline-color 120ms ease, background 120ms ease',
+        }}
+        onDragEnter={handleDragEnterUploadZone}
+        onDragOver={handleDragOverUploadZone}
+        onDragLeave={handleDragLeaveUploadZone}
+        onDrop={(e) => { void handleDropUploadZone(e); }}
+      >
         {/* Toolbar */}
         <div
           style={{
@@ -955,12 +1090,18 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
               </>
             )}
             <button
-              onClick={handleUpload}
+              onClick={handleUploadButtonClick}
               disabled={uploadLoading}
               style={btnStyle('primary', true)}
             >
               {uploadLoading ? '⏳ Uploading…' : '⬆ Upload'}
             </button>
+            <input
+              ref={uploadInputRef}
+              type="file"
+              style={{ display: 'none' }}
+              onChange={handleUploadInputChange}
+            />
           </div>
         </div>
         {sourceHandlingMode !== 'keep_original' && (
@@ -1161,13 +1302,25 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
         <OverlayModal>
           <h3 style={{ marginTop: 0, marginBottom: 12 }}>File Handling After Upload</h3>
           <p style={{ marginTop: 0, marginBottom: 16, color: 'var(--text-secondary)', fontSize: 13 }}>
-            Move uploaded files to system storage after successful upload?
+            Choose how to handle the source file after a successful upload.
           </p>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button
               onClick={() => {
+                sourceHandlingModalResolve?.(null);
+                setSourceHandlingModalResolve(null);
+                setShowSourceHandlingModal(false);
+                addToast('info', 'Upload cancelled before encryption.');
+              }}
+              style={btnStyle('ghost', true)}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => {
                 sourceHandlingModalResolve?.('keep_original');
                 setSourceHandlingModalResolve(null);
+                setShowSourceHandlingModal(false);
               }}
               style={btnStyle('secondary', true)}
             >
@@ -1177,6 +1330,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
               onClick={() => {
                 sourceHandlingModalResolve?.('move_to_system');
                 setSourceHandlingModalResolve(null);
+                setShowSourceHandlingModal(false);
               }}
               style={btnStyle('primary', true)}
             >
@@ -1224,13 +1378,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
           )}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
             <button
-              onClick={() => {
-                setShowUploadPasswordModal(false);
-                if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
-                if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
-                setUploadPasswordError(null);
-                addToast('info', 'Upload cancelled before processing.');
-              }}
+              onClick={handleCancelUploadPassword}
               style={btnStyle('secondary', true)}
             >
               Cancel

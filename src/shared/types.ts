@@ -106,6 +106,13 @@ export interface FileUploadResult {
   files: FileUploadItemResult[];
 }
 
+export interface StagedUploadFile {
+  source_name: string;
+  mime_type: string | null;
+  size_bytes: number;
+  content_base64: string;
+}
+
 export interface SecureTempViewResult {
   viewId: string;
   fileName: string;

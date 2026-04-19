@@ -34,6 +34,7 @@ import type {
   FileUploadResult,
   SourceHandlingMode,
   FileUploadItemResult,
+  StagedUploadFile,
   SecureTempViewResult,
   SecureTempViewCleanupResult,
 } from '../../shared/types';
@@ -91,6 +92,12 @@ function computeSha256(filePath: string): string {
 async function computeSha256Stream(filePath: string): Promise<string> {
   const hash = crypto.createHash('sha256');
   await pipeline(fs.createReadStream(filePath), hash);
+  return hash.digest('hex');
+}
+
+function computeSha256Buffer(data: Buffer): string {
+  const hash = crypto.createHash('sha256');
+  hash.update(data);
   return hash.digest('hex');
 }
 
@@ -473,6 +480,8 @@ export class DashboardService {
     sourceHandlingMode: SourceHandlingMode,
     confirmPermanentDelete: boolean,
     win: BrowserWindow,
+    filePaths?: string[],
+    stagedFiles?: StagedUploadFile[],
   ): Promise<FileUploadResult> {
     const session = requireAuth(sessionId);
 
@@ -480,7 +489,7 @@ export class DashboardService {
     const shelf = this.db.prepare('SELECT id FROM shelves WHERE id = ?').get(shelfId);
     if (!shelf) throw new AuthError('NOT_FOUND', 'Shelf not found');
 
-    // Check quota before opening dialog
+    // Check quota before selecting files
     const quotaRow = this.db
       .prepare("SELECT value FROM storage_config WHERE key = 'quota_bytes'")
       .get() as { value: string } | undefined;
@@ -489,13 +498,46 @@ export class DashboardService {
       .prepare('SELECT COALESCE(SUM(size_bytes), 0) as total FROM files')
       .get() as { total: number };
 
-    const { filePaths, canceled } = await dialog.showOpenDialog(win, {
-      title: 'Select File to Upload',
-      properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'All Files', extensions: ['*'] }],
-    });
+    const selectedStagedFiles = stagedFiles?.filter((file) => file.source_name.trim()) ?? [];
+    let selectedFilePaths = filePaths;
+    if (selectedStagedFiles.length === 0 && (!selectedFilePaths || selectedFilePaths.length === 0)) {
+      const selected = await dialog.showOpenDialog(win, {
+        title: 'Select File to Upload',
+        properties: ['openFile', 'multiSelections'],
+        filters: [{ name: 'All Files', extensions: ['*'] }],
+      });
+      if (selected.canceled || selected.filePaths.length === 0) {
+        throw new AuthError('CANCELLED', 'Upload cancelled');
+      }
+      selectedFilePaths = selected.filePaths;
+    }
 
-    if (canceled || filePaths.length === 0) {
+    const uploadSources: Array<
+      | { kind: 'path'; sourcePath: string; sourceName: string }
+      | { kind: 'staged'; sourcePath: string; sourceName: string; bytes: Buffer; mimeType: string | null }
+    > = [];
+    if (selectedStagedFiles.length > 0) {
+      for (const stagedFile of selectedStagedFiles) {
+        const bytes = Buffer.from(stagedFile.content_base64, 'base64');
+        if (bytes.length === 0) continue;
+        uploadSources.push({
+          kind: 'staged',
+          sourcePath: stagedFile.source_name,
+          sourceName: stagedFile.source_name,
+          bytes,
+          mimeType: stagedFile.mime_type ?? null,
+        });
+      }
+    } else if (selectedFilePaths) {
+      for (const selectedPath of selectedFilePaths) {
+        uploadSources.push({
+          kind: 'path',
+          sourcePath: selectedPath,
+          sourceName: path.basename(selectedPath),
+        });
+      }
+    }
+    if (uploadSources.length === 0) {
       throw new AuthError('CANCELLED', 'Upload cancelled');
     }
 
@@ -510,8 +552,9 @@ export class DashboardService {
       throw new AuthError('ENCRYPTION_PASSWORD_REQUIRED', 'Encryption password is required for encrypted upload.');
     }
 
-    for (const filePath of filePaths) {
-      const sourceName = path.basename(filePath);
+    for (const uploadSource of uploadSources) {
+      const sourceName = uploadSource.sourceName;
+      const sourcePath = uploadSource.sourcePath;
       let rollbackContext:
         | {
             fileId: string;
@@ -522,30 +565,34 @@ export class DashboardService {
           }
         | undefined;
       const item: FileUploadItemResult = {
-        source_path: filePath,
+        source_path: sourcePath,
         source_name: sourceName,
         success: false,
         removed_original: false,
         mode,
       };
       try {
-        const stat = fs.statSync(filePath);
+        const sourceSize = uploadSource.kind === 'path' ? fs.statSync(sourcePath).size : uploadSource.bytes.length;
 
-        if (stat.size > STORAGE_CONSTANTS.MAX_FILE_SIZE) {
+        if (sourceSize > STORAGE_CONSTANTS.MAX_FILE_SIZE) {
           throw new AuthError(
             'FILE_TOO_LARGE',
             `File exceeds ${STORAGE_CONSTANTS.MAX_FILE_SIZE / (1024 ** 3)} GB limit: ${sourceName}`,
           );
         }
 
-        if (usedRow.total + stat.size > quota) {
+        if (usedRow.total + sourceSize > quota) {
           throw new AuthError('QUOTA_EXCEEDED', 'Storage quota exceeded');
         }
 
-        const sha256 = await computeSha256Stream(filePath);
+        const sha256 = uploadSource.kind === 'path'
+          ? await computeSha256Stream(sourcePath)
+          : computeSha256Buffer(uploadSource.bytes);
         const ext = path.extname(sourceName);
         const originalExtension = normalizeExtension(ext);
-        const mime = this.guessMime(ext);
+        const mime = uploadSource.kind === 'staged'
+          ? uploadSource.mimeType ?? this.guessMime(ext)
+          : this.guessMime(ext);
         const fileId = uuidv4();
 
         let storedName: string;
@@ -570,7 +617,7 @@ export class DashboardService {
                ORDER BY created_at ASC
                LIMIT 1`,
             )
-            .get(sha256, stat.size) as { id: string; stored_name: string } | undefined;
+            .get(sha256, sourceSize) as { id: string; stored_name: string } | undefined;
 
           if (existingPayload && fs.existsSync(path.join(filesDir, existingPayload.stored_name))) {
             storedName = existingPayload.stored_name;
@@ -579,7 +626,12 @@ export class DashboardService {
           } else {
             storedName = `${uuidv4()}${ext}`;
             payloadId = uuidv4();
-            await copyStream(filePath, path.join(filesDir, storedName));
+            const targetPath = path.join(filesDir, storedName);
+            if (uploadSource.kind === 'path') {
+              await copyStream(sourcePath, targetPath);
+            } else {
+              fs.writeFileSync(targetPath, uploadSource.bytes);
+            }
             payloadWrittenToDisk = true;
           }
         } else {
@@ -594,11 +646,16 @@ export class DashboardService {
           const tempPath = makeTempPartPath(finalPath);
 
           try {
-            await pipeline(
-              fs.createReadStream(filePath),
-              cipher,
-              fs.createWriteStream(tempPath),
-            );
+            if (uploadSource.kind === 'path') {
+              await pipeline(
+                fs.createReadStream(sourcePath),
+                cipher,
+                fs.createWriteStream(tempPath),
+              );
+            } else {
+              const encrypted = Buffer.concat([cipher.update(uploadSource.bytes), cipher.final()]);
+              fs.writeFileSync(tempPath, encrypted);
+            }
             await fs.promises.rename(tempPath, finalPath);
             payloadWrittenToDisk = true;
           } catch (e) {
@@ -627,7 +684,7 @@ export class DashboardService {
                 `INSERT INTO file_payloads (id, stored_name, sha256, size_bytes, is_encrypted, ref_count)
                  VALUES (?, ?, ?, ?, ?, 1)`,
               )
-              .run(payloadId, storedName, sha256, stat.size, encrypt ? 1 : 0);
+              .run(payloadId, storedName, sha256, sourceSize, encrypt ? 1 : 0);
           }
 
           this.db
@@ -641,7 +698,7 @@ export class DashboardService {
               originalExtension,
               storedName,
               mime,
-              stat.size,
+              sourceSize,
               sha256,
               shelfId,
               ANONYMOUS_UPLOAD_USER_ID,
@@ -684,7 +741,9 @@ export class DashboardService {
         );
 
         if (mode === 'move_to_system') {
-          item.removed_original = await this.removeOriginalFileSafely(filePath, confirmPermanentDelete);
+          item.removed_original = uploadSource.kind === 'path'
+            ? await this.removeOriginalFileSafely(sourcePath, confirmPermanentDelete)
+            : false;
         }
 
         this.logActivity(
@@ -695,7 +754,7 @@ export class DashboardService {
 
         item.success = true;
         item.file = this.getFileRecord(fileId);
-        usedRow.total += stat.size;
+        usedRow.total += sourceSize;
       } catch (e) {
         if (e instanceof AuthError && e.code.startsWith('UPLOAD_INTEGRITY_') && rollbackContext) {
           try {

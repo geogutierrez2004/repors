@@ -150,6 +150,8 @@ export function registerDashboardHandlers(
           encryptionPassword,
           sourceHandlingMode,
           confirmPermanentDelete,
+          filePaths,
+          stagedFiles,
         } = FileUploadSchema.parse(payload);
         const win = getSenderWindow(event);
         return ok(await dashboardService.uploadFile(
@@ -160,6 +162,8 @@ export function registerDashboardHandlers(
           sourceHandlingMode,
           confirmPermanentDelete,
           win,
+          filePaths,
+          stagedFiles,
         ));
       } catch (e) {
         return handleError(e);

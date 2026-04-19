@@ -23,6 +23,7 @@ import type {
   SessionInfo,
   PaginatedResult,
   FileUploadResult,
+  StagedUploadFile,
   SecureTempViewResult,
   SecureTempViewCleanupResult,
   SourceHandlingMode,
@@ -109,6 +110,8 @@ const api = {
       encryptionPassword?: string,
       sourceHandlingMode: SourceHandlingMode = 'keep_original',
       confirmPermanentDelete = false,
+      filePaths?: string[],
+      stagedFiles?: StagedUploadFile[],
     ) =>
       safeInvoke<FileUploadResult>(IPC_CHANNELS.FILES_UPLOAD, {
         sessionId,
@@ -117,6 +120,8 @@ const api = {
         encryptionPassword,
         sourceHandlingMode,
         confirmPermanentDelete,
+        filePaths,
+        stagedFiles,
       }),
 
     download: (sessionId: string, fileId: string, decryptionPassword?: string) =>
