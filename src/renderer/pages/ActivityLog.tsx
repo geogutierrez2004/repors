@@ -44,12 +44,103 @@ function formatActionName(action: string): string {
 }
 
 function fmtDateTime(ts: string): string {
-  const date = new Date(ts);
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  const year = date.getFullYear();
-  const time = date.toLocaleTimeString(undefined, { timeStyle: 'medium' });
-  return `${month}-${day}-${year} ${time}`;
+  return new Date(ts).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'medium' });
+}
+
+// ────────────────────────────────────────
+// Activity heatmap (hour × day-of-week)
+// ────────────────────────────────────────
+
+function ActivityHeatmap({ items }: { items: ActivityRecord[] }) {
+  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const TIME_BUCKETS = ['00-03', '04-07', '08-11', '12-15', '16-19', '20-23', 'Night'];
+
+  // Build count matrix [day][timeBucket] where time buckets are 4-hour intervals
+  const matrix = Array.from({ length: 7 }, () => new Array<number>(7).fill(0));
+  let max = 0;
+
+  for (const item of items) {
+    const d = new Date(item.created_at);
+    const day = d.getDay();
+    const hour = d.getHours();
+    const bucket = Math.floor(hour / 4); // 0-5 for hours, then 6 for "night" (optional)
+    matrix[day][bucket]++;
+    if (matrix[day][bucket] > max) max = matrix[day][bucket];
+  }
+
+  const cellColor = (count: number): string => {
+    if (count === 0) return 'var(--bg-hover)';
+    const intensity = Math.max(0.15, count / Math.max(max, 1));
+    const r = Math.round(79 + (20 - 79) * intensity);
+    const g = Math.round(70 + (39 - 70) * intensity);
+    const b = Math.round(229 + (205 - 229) * intensity);
+    return `rgba(${r},${g},${b},${intensity})`;
+  };
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <div style={{ display: 'flex', gap: 2, marginBottom: 2 }}>
+        <div style={{ width: 32 }} />
+        {TIME_BUCKETS.map((t) => (
+          <div
+            key={t}
+            style={{
+              width: 20,
+              fontSize: 7,
+              textAlign: 'center',
+              color: 'var(--text-secondary)',
+              fontWeight: 600,
+            }}
+          >
+            {t}
+          </div>
+        ))}
+      </div>
+      {DAYS.map((day, di) => (
+        <div key={day} style={{ display: 'flex', gap: 2, marginBottom: 2, alignItems: 'center' }}>
+          <div
+            style={{
+              width: 32,
+              fontSize: 10,
+              color: 'var(--text-secondary)',
+              textAlign: 'right',
+              paddingRight: 4,
+            }}
+          >
+            {day}
+          </div>
+          {TIME_BUCKETS.map((_t, bi) => (
+            <div
+              key={bi}
+              title={`${day} ${TIME_BUCKETS[bi]} — ${matrix[di][bi]} events`}
+              style={{
+                width: 20,
+                height: 20,
+                borderRadius: 2,
+                background: cellColor(matrix[di][bi]),
+                border: '1px solid var(--border)',
+              }}
+            />
+          ))}
+        </div>
+      ))}
+      <div
+        style={{ fontSize: 9, color: 'var(--text-secondary)', marginTop: 2, textAlign: 'right' }}
+      >
+        ← less · more →&nbsp;
+        <span
+          style={{
+            display: 'inline-block',
+            width: 40,
+            height: 8,
+            background: 'linear-gradient(to right, var(--bg-hover), #4f46e5)',
+            borderRadius: 2,
+            verticalAlign: 'middle',
+          }}
+        />
+      </div>
+    </div>
+  );
 }
 
 // ────────────────────────────────────────
@@ -111,6 +202,7 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
   const [result, setResult] = useState<PaginatedResult<ActivityRecord>>({
     items: [], total: 0, page: 1, pageSize: PAGE_SIZE,
   });
+  const [allItems, setAllItems] = useState<ActivityRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [page, setPage] = useState(1);
@@ -132,9 +224,19 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
     setLoading(false);
   }, [sessionId, filterAction, filterDateFrom, filterDateTo, page, addToast]);
 
+  // Load all items (for heatmap) — unfiltered, large batch
+  const loadAll = useCallback(async () => {
+    const res = await window.sccfs.activity.list(sessionId, { page: 1, pageSize: 100 });
+    if (res.ok) setAllItems(res.data.items);
+  }, [sessionId]);
+
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    loadAll();
+  }, [loadAll]);
 
   const totalPages = Math.max(1, Math.ceil(result.total / PAGE_SIZE));
 
@@ -207,7 +309,7 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
           <label style={labelStyle}>Action</label>
           <select
             value={filterAction}
-            onChange={(e) => { setFilterAction(e.target.value); setPage(1); }}
+            onChange={(e) => setFilterAction(e.target.value)}
             style={selectStyle}
           >
             <option value="">All Actions</option>
@@ -221,7 +323,7 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
           <input
             type="date"
             value={filterDateFrom}
-            onChange={(e) => { setFilterDateFrom(e.target.value); setPage(1); }}
+            onChange={(e) => setFilterDateFrom(e.target.value)}
             style={inputStyle}
           />
         </div>
@@ -230,11 +332,14 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
           <input
             type="date"
             value={filterDateTo}
-            onChange={(e) => { setFilterDateTo(e.target.value); setPage(1); }}
+            onChange={(e) => setFilterDateTo(e.target.value)}
             style={inputStyle}
           />
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
+          <button onClick={applyFilters} style={btnStyle('primary', true)}>
+            Apply
+          </button>
           <button onClick={clearFilters} style={btnStyle('secondary', true)}>
             Clear
           </button>
@@ -244,8 +349,11 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
         </div>
       </div>
 
-      {/* Table */}
-      <div style={{ ...cardStyle(), padding: 0, overflow: 'hidden' }}>
+      {/* Two-column: table + heatmap */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 20 }}>
+        {/* Table */}
+        <div>
+          <div style={{ ...cardStyle(), padding: 0, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--bg-hover)', borderBottom: '1px solid var(--border)' }}>
@@ -333,6 +441,19 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
               </button>
             </div>
           )}
+        </div>
+
+        {/* Heatmap */}
+        <div
+          className="no-print"
+          style={{ ...cardStyle(), minWidth: 220, maxHeight: 300, overflowY: 'auto' }}
+        >
+          <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 14, color: 'var(--text-primary)' }}>
+            Activity Heatmap (recent 100 events)
+          </h3>
+          <ActivityHeatmap items={allItems} />
+        </div>
+      </div>
     </div>
   );
 }

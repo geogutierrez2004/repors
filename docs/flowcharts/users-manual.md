@@ -92,26 +92,13 @@ The file browser displays the following columns:
 3. Click Backup to create a backup package.
 4. Click Restore to restore from a selected backup.
 
-## 6. User Management (Admin Only)
-1. Open User Management from the navigation menu (admins only).
-2. View all users with their roles (Admin/Staff), status (Active/Inactive), failed login attempts, and lock state.
-3. Create new users by clicking "New User" and entering username, password, and role.
-4. Manage user roles and status:
-   - **Reset Password**: Select a user and enter a new temporary password.
-   - **Toggle Active**: Activate or deactivate a user account.
-   - **Unlock Account**: Unlock a locked account after failed login attempts.
-5. **Admin Account Protection**: Admin accounts cannot be deleted. Only staff accounts can be deleted by other admins. The delete button (🗑) is hidden for admin users.
-6. View role and status distribution charts (Admin/Staff split, Active/Inactive split).
-7. See account health summary showing total users, active/locked accounts, and role distribution.
-
-## 7. Common Warnings
+## 6. Common Warnings
 1. Storage warning: usage approaching configured threshold.
 2. Storage critical: usage at/above danger threshold.
 3. Failed uploads warning: 24h failures exceed configured level.
 
-## 8. Troubleshooting
+## 7. Troubleshooting
 1. Build/runtime issues after updates: run main and renderer build commands.
 2. Cannot decrypt file: verify password and file integrity.
 3. Session invalid errors: log in again.
 4. Restore caution: restore may invalidate active sessions.
-5. Timestamp display: Timestamps are stored and displayed in UTC. Times should display correctly in your local timezone after the latest update.

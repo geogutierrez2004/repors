@@ -206,6 +206,76 @@ export function SecurityDashboard({ sessionId, user, addToast }: Props): React.J
             )}
           </div>
 
+          {/* Active sessions (admin only) */}
+          {user.role === 'admin' && (
+          <div style={{ ...cardStyle(), marginBottom: 20, padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>
+                🟢 Access Controls — Active Sessions
+              </h2>
+              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                Auto-refreshes every 15s
+              </span>
+            </div>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'var(--bg-hover)', borderBottom: '1px solid var(--border)' }}>
+                  {['User', 'Started', 'Last Activity', 'Duration', 'Session ID', 'Action'].map((h) => (
+                    <th key={h} style={thStyle()}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sessions.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} style={{ textAlign: 'center', padding: 24, color: 'var(--text-secondary)' }}>
+                      No active sessions
+                    </td>
+                  </tr>
+                ) : (
+                  sessions.map((s) => {
+                    const isSelf = s.sessionId === sessionId;
+                    return (
+                      <tr key={s.sessionId} style={{ borderBottom: '1px solid var(--border)', background: isSelf ? 'var(--bg-active)' : undefined }}>
+                        <td style={{ ...tdStyle(), fontWeight: 600 }}>
+                          {s.username}
+                          {isSelf && (
+                            <span style={{ fontSize: 10, background: 'var(--accent)', color: '#fff', borderRadius: 10, padding: '1px 6px', marginLeft: 6 }}>
+                              You
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ ...tdStyle(), color: 'var(--text-secondary)', fontSize: 12 }}>
+                          {fmtTime(s.createdAt)}
+                        </td>
+                        <td style={{ ...tdStyle(), color: 'var(--text-secondary)', fontSize: 12 }}>
+                          {fmtTime(s.lastActivity)}
+                        </td>
+                        <td style={{ ...tdStyle(), color: 'var(--text-secondary)', fontSize: 12 }}>
+                          {fmtDuration(now - s.createdAt)}
+                        </td>
+                        <td style={{ ...tdStyle(), fontFamily: 'monospace', fontSize: 11, color: 'var(--text-secondary)' }}>
+                          {s.sessionId.slice(0, 8)}…
+                        </td>
+                        <td style={tdStyle()}>
+                          {!isSelf && (
+                            <button
+                              onClick={() => handleTerminate(s.sessionId, s.username)}
+                              style={{ ...btnStyle('danger', true), fontSize: 11 }}
+                            >
+                              Terminate
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+          )}
+
           {/* Threshold settings */}
           <div style={{ ...cardStyle(), marginBottom: 20 }}>
             <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, color: 'var(--text-primary)' }}>
