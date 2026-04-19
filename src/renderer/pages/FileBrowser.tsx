@@ -650,7 +650,6 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   };
 
   const handleCancelUploadPassword = () => {
-    setShowSourceHandlingModal(false);
     setShowUploadPasswordModal(false);
     resetStagedUpload();
     addToast('info', 'Upload cancelled before processing.');

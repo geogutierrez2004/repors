@@ -537,6 +537,9 @@ export class DashboardService {
           throw new AuthError('INVALID_UPLOAD_DATA', 'Invalid staged file name.');
         }
         const bytes = decodeBase64Strict(stagedFile.content_base64);
+        if (bytes.length !== stagedFile.size_bytes) {
+          throw new AuthError('INVALID_UPLOAD_DATA', `Staged file "${sourceName}" size mismatch.`);
+        }
         if (bytes.length === 0) {
           throw new AuthError('INVALID_UPLOAD_DATA', `Staged file "${sourceName}" is empty.`);
         }
