@@ -513,6 +513,7 @@ export class DashboardService {
     sourceHandlingMode: SourceHandlingMode,
     confirmPermanentDelete: boolean,
     win: BrowserWindow,
+    dragDropFilePaths?: string[],
   ): Promise<FileUploadResult> {
     const session = requireAuth(sessionId);
 
@@ -529,14 +530,24 @@ export class DashboardService {
       .prepare('SELECT COALESCE(SUM(size_bytes), 0) as total FROM files')
       .get() as { total: number };
 
-    const { filePaths, canceled } = await dialog.showOpenDialog(win, {
-      title: 'Select File to Upload',
-      properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'All Files', extensions: ['*'] }],
-    });
-
-    if (canceled || filePaths.length === 0) {
-      throw new AuthError('CANCELLED', 'Upload cancelled');
+    let filePaths: string[];
+    
+    // If dragDropFilePaths provided (from drag-drop), use them directly; otherwise open dialog
+    if (dragDropFilePaths && dragDropFilePaths.length > 0) {
+      filePaths = dragDropFilePaths;
+    } else {
+      const result = await dialog.showOpenDialog({
+        title: 'Select File to Upload',
+        properties: ['openFile', 'multiSelections'],
+        filters: [{ name: 'All Files', extensions: ['*'] }],
+        defaultPath: require('os').homedir(),
+      });
+      
+      if (result.canceled || result.filePaths.length === 0) {
+        throw new AuthError('CANCELLED', 'Upload cancelled');
+      }
+      
+      filePaths = result.filePaths;
     }
 
     const filesDir = getFilesDir();
@@ -777,7 +788,7 @@ export class DashboardService {
       .get(fileId) as (FileRecord & { stored_name: string }) | undefined;
     if (!fileRow) throw new AuthError('NOT_FOUND', 'File not found');
 
-    const { filePath, canceled } = await dialog.showSaveDialog(win, {
+    const { filePath, canceled } = await dialog.showSaveDialog({
       title: 'Save File',
       defaultPath: this.resolveDownloadFileName(fileRow),
     });
@@ -1356,7 +1367,7 @@ export class DashboardService {
     const timestamp = new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-');
     const defaultName = `sccfs-backup-${timestamp}`;
 
-    const { filePath, canceled } = await dialog.showSaveDialog(win, {
+    const { filePath, canceled } = await dialog.showSaveDialog({
       title: 'Choose Backup Folder',
       defaultPath: path.join(getBackupsDir(), defaultName),
       buttonLabel: 'Create Backup Folder',
@@ -1427,7 +1438,7 @@ export class DashboardService {
   async restore(sessionId: string, win: BrowserWindow): Promise<void> {
     const session = requireAuth(sessionId);
 
-    const { filePaths, canceled } = await dialog.showOpenDialog(win, {
+    const { filePaths, canceled } = await dialog.showOpenDialog({
       title: 'Restore from Backup Folder',
       properties: ['openDirectory'],
     });

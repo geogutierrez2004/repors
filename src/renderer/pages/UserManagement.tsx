@@ -43,9 +43,12 @@ function UserModal({
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
+  const [currentPasswordConfirm, setCurrentPasswordConfirm] = useState('');
   const [role, setRole] = useState<'admin' | 'staff'>('staff');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const currentPasswordMatches = state.mode === 'change-password' ? currentPassword === currentPasswordConfirm && currentPassword.trim() !== '' : true;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -157,10 +160,26 @@ function UserModal({
               style={inputStyle}
               autoFocus
             />
+            
+            <label style={labelStyle}>Confirm Current Password</label>
+            <input
+              required
+              type="password"
+              value={currentPasswordConfirm}
+              onChange={(e) => setCurrentPasswordConfirm(e.target.value)}
+              style={inputStyle}
+              placeholder="Re-enter your current password"
+            />
+            
+            {currentPassword !== currentPasswordConfirm && currentPassword.trim() !== '' && (
+              <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 12 }}>
+                Passwords do not match
+              </div>
+            )}
           </>
         )}
 
-        {state.mode !== 'create-user' && (
+        {state.mode !== 'create-user' && (state.mode === 'reset-password' || currentPasswordMatches) && (
           <>
             <label style={labelStyle}>
               {state.mode === 'change-password' ? 'New Password' : 'Password'}
@@ -186,7 +205,7 @@ function UserModal({
           <button type="button" onClick={onClose} style={btnStyle('secondary', true)}>
             Cancel
           </button>
-          <button type="submit" disabled={loading} style={btnStyle('primary', true)}>
+          <button type="submit" disabled={loading || (state.mode === 'change-password' && !currentPasswordMatches)} style={btnStyle('primary', true)}>
             {loading ? 'Saving…' : 'Save'}
           </button>
         </div>
@@ -247,7 +266,7 @@ export function UserManagement({ sessionId, user, addToast }: Props): React.JSX.
   };
 
   const handleDelete = async (u: SafeUser) => {
-    if (!confirm(`Delete user "${u.username}"? This cannot be undone.`)) return;
+    if (!confirm(`You cannot delete files or folders, ask administrators to delete them or something.`)) return;
     const res = await window.sccfs.users.delete(sessionId, u.id);
     if (res.ok) {
       addToast('success', `User "${u.username}" deleted`);
@@ -396,6 +415,61 @@ export function UserManagement({ sessionId, user, addToast }: Props): React.JSX.
         </div>
       </div>
 
+      {/* Current User Card */}
+      <div style={{ ...cardStyle(), marginBottom: 24, padding: '20px', border: '2px solid var(--accent)', borderRadius: 8 }}>
+        <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 16, color: 'var(--text-primary)' }}>
+          👤 Your Account
+        </h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+          <div>
+            <p style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 4 }}>Username</p>
+            <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{user.username}</p>
+          </div>
+          <div>
+            <p style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 4 }}>Role</p>
+            <span
+              style={{
+                fontSize: 12,
+                padding: '3px 8px',
+                borderRadius: 10,
+                background: user.role === 'admin' ? '#eef2ff' : '#f0fdf4',
+                color: user.role === 'admin' ? '#4f46e5' : '#16a34a',
+                fontWeight: 600,
+                textTransform: 'capitalize',
+                display: 'inline-block',
+              }}
+            >
+              {user.role}
+            </span>
+          </div>
+          <div>
+            <p style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 4 }}>Status</p>
+            <span
+              style={{
+                fontSize: 12,
+                padding: '3px 8px',
+                borderRadius: 10,
+                background: user.is_active ? '#f0fdf4' : '#fef2f2',
+                color: user.is_active ? '#16a34a' : '#dc2626',
+                fontWeight: 600,
+                display: 'inline-block',
+              }}
+            >
+              {user.is_active ? '● Active' : '○ Inactive'}
+            </span>
+          </div>
+          <div>
+            <p style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 4 }}>Created</p>
+            <p style={{ fontSize: 14, color: 'var(--text-primary)' }}>{new Date(user.created_at).toLocaleDateString()}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Table Header */}
+      <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: 'var(--text-primary)' }}>
+        All Users
+      </h3>
+
       {/* Table */}
       <div style={{ ...cardStyle(), padding: 0, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -416,7 +490,7 @@ export function UserManagement({ sessionId, user, addToast }: Props): React.JSX.
                 </td>
               </tr>
             ) : (
-              users.map((u) => {
+              users.filter((u) => u.id !== user.id).map((u) => {
                 const isSelf = u.id === user.id;
                 return (
                   <tr key={u.id} style={{ borderBottom: '1px solid var(--border)' }}>
