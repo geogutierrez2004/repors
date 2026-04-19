@@ -372,7 +372,10 @@ export function App(): React.JSX.Element {
 
           {/* Nav items */}
           <nav style={{ flex: 1, padding: '0 12px' }}>
-            {NAV_ITEMS.map((item) => {
+            {NAV_ITEMS.filter((item) => {
+              if (item.id === 'users' && user.role !== 'admin') return false;
+              return true;
+            }).map((item) => {
               const active = page === item.id;
               return (
                 <button

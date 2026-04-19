@@ -69,8 +69,19 @@ flowchart TD
   UserChoice -->|Upload File| UploadFlow["📤 Upload"]
   UploadFlow --> SessionGuard3{Session<br/>Valid?}
   SessionGuard3 -->|No| SessionDenied
-  SessionGuard3 -->|Yes| SelectFile2["Select File"]
-  SelectFile2 --> CheckStorageLevel{Usage above<br/>warning threshold?}
+  SessionGuard3 -->|Yes| CheckRole{Admin<br/>Role?}
+  CheckRole -->|No| RoleDenied["🚫 Permission Denied<br/>(View-Only)"]
+  RoleDenied --> Dashboard
+  CheckRole -->|Yes| SelectFileMethod{Upload Method?}
+  SelectFileMethod -->|File Dialog| SelectFile2["Open File Dialog"]
+  SelectFileMethod -->|Drag-Drop| DragDropFeedback["🎯 Show Drop Zone<br/>Visual Highlight"]
+  DragDropFeedback --> SelectFile2
+  SelectFile2 --> CheckMultiple{Multiple<br/>Files?}
+  CheckMultiple -->|Yes| BatchModal["📋 Show Batch Summary<br/>List All Files"]
+  CheckMultiple -->|No| CheckStorageLevel
+  BatchModal --> ConfirmBatch{Confirm<br/>Upload?}
+  ConfirmBatch -->|Cancel| Dashboard
+  ConfirmBatch -->|OK| CheckStorageLevel{Usage above<br/>warning threshold?}
   CheckStorageLevel -->|Yes| StorageWarn["⚠️ Show Storage Warning"]
   CheckStorageLevel -->|No| CheckQuota{Quota<br/>OK?}
   StorageWarn --> CheckQuota
@@ -117,6 +128,31 @@ flowchart TD
   ActivityFlow --> QueryLog["Read from D6<br/>Activity Log"]
   QueryLog --> DisplayLog["Display Events<br/>Filter/Sort"]
   DisplayLog --> Dashboard
+
+  UserChoice -->|File Management| FileManagementFlow["✏️ Rename/Move/Delete"]
+  FileManagementFlow --> SessionGuard5{Session<br/>Valid?}
+  SessionGuard5 -->|No| SessionDenied
+  SessionGuard5 -->|Yes| CheckAdminRole{Admin<br/>Role?}
+  CheckAdminRole -->|No| ManagementDenied["🚫 Permission Denied<br/>(View-Only)"]
+  ManagementDenied --> Dashboard
+  CheckAdminRole -->|Yes| ManagementAction{File Action?}
+  ManagementAction -->|Rename| RenamePrompt["Enter New Filename"]
+  RenamePrompt --> ValidateRename{Valid<br/>Filename?}
+  ValidateRename -->|No| RenameError["❌ Invalid Filename"]
+  RenameError --> RenamePrompt
+  ValidateRename -->|Yes| UpdateFileMetadata["Update D2 Metadata"]
+  ManagementAction -->|Move| MoveAction["Select Target Folder"]
+  MoveAction --> ValidateFolder{Target<br/>Valid?}
+  ValidateFolder -->|No| MoveError["❌ Invalid Folder"]
+  MoveError --> MoveAction
+  ValidateFolder -->|Yes| UpdateFileMetadata
+  ManagementAction -->|Delete| ConfirmDelete{Confirm<br/>Delete?}
+  ConfirmDelete -->|No| Dashboard
+  ConfirmDelete -->|Yes| DeleteFileMetadata["Remove from D2"]
+  UpdateFileMetadata --> DeleteFileMetadata
+  DeleteFileMetadata --> DeletePayload["Clean up D3 payload<br/>if ref_count=0"]
+  DeletePayload --> LogManagementActivity["Log Rename/Move/Delete"]
+  LogManagementActivity --> Dashboard
 
   UserChoice -->|Security Dashboard| SecurityFlow["🛡️ Security Integrity"]
   SecurityFlow --> LoadIntegrity["Load Integrity Metrics"]

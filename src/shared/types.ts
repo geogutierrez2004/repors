@@ -51,6 +51,7 @@ export interface SafeUser {
   username: string;
   role: Role;
   is_active: boolean;
+  locked_until: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -88,6 +89,7 @@ export interface FileRecord {
   is_encrypted: boolean;
   created_at: string;
   updated_at: string;
+  uploaded_by: string | null;
 }
 
 export type SourceHandlingMode = 'keep_original' | 'move_to_system' | 'ask_each_time';

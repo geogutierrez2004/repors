@@ -156,14 +156,23 @@ const ACTION_COLORS: Record<string, string> = {
   UPDATE_USER: '#d97706',
 };
 
+function formatActionName(action: string): string {
+  return action
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
+    .replace(/Shelf/g, 'Folder');
+}
+
 // ────────────────────────────────────────
 // Dashboard
 // ────────────────────────────────────────
 
-export function Dashboard({ sessionId, addToast }: Props): React.JSX.Element {
+export function Dashboard({ sessionId, user, addToast }: Props): React.JSX.Element {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [storageQuota, setStorageQuota] = useState(500 * 1024 * 1024 * 1024);
   const [loading, setLoading] = useState(true);
+  const [driveCheckDone, setDriveCheckDone] = useState(false);
 
   const load = useCallback(async () => {
     const [statsRes, storageRes] = await Promise.all([
@@ -178,8 +187,24 @@ export function Dashboard({ sessionId, addToast }: Props): React.JSX.Element {
     if (storageRes.ok) {
       setStorageQuota(storageRes.data.quota_bytes);
     }
+    
+    // Check drive status on first load only
+    if (!driveCheckDone) {
+      const driveRes = await window.sccfs.storage.getDriveStatus(sessionId);
+      if (driveRes.ok && driveRes.data && Array.isArray(driveRes.data)) {
+        driveRes.data.forEach((drive) => {
+          if (drive.warningLevel === 'critical') {
+            addToast('warning', `🔴 Drive ${drive.drive} is ${drive.usedPercent.toFixed(0)}% full — critically low space`);
+          } else if (drive.warningLevel === 'warning') {
+            addToast('warning', `🟡 Drive ${drive.drive} is ${drive.usedPercent.toFixed(0)}% full — approaching capacity`);
+          }
+        });
+      }
+      setDriveCheckDone(true);
+    }
+    
     setLoading(false);
-  }, [sessionId, addToast]);
+  }, [sessionId, addToast, driveCheckDone]);
 
   useEffect(() => {
     load();
@@ -239,7 +264,9 @@ export function Dashboard({ sessionId, addToast }: Props): React.JSX.Element {
 
       {/* KPI Row */}
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
-        <KpiCard icon="🟢" label="Active Sessions" value={stats.active_sessions} />
+        {user.role === 'admin' && (
+          <KpiCard icon="🟢" label="Active Sessions" value={stats.active_sessions} />
+        )}
         <KpiCard
           icon="📁"
           label="Total Files"
@@ -258,12 +285,14 @@ export function Dashboard({ sessionId, addToast }: Props): React.JSX.Element {
           value={stats.failed_uploads_24h}
           alert={stats.failed_uploads_24h > 0}
         />
-        <KpiCard
-          icon="🔒"
-          label="Locked Accounts"
-          value={stats.locked_accounts}
-          alert={stats.locked_accounts > 0}
-        />
+        {user.role === 'admin' && (
+          <KpiCard
+            icon="🔒"
+            label="Locked Accounts"
+            value={stats.locked_accounts}
+            alert={stats.locked_accounts > 0}
+          />
+        )}
         <StorageBar used={stats.total_size_bytes} quota={storageQuota} />
       </div>
 
@@ -333,7 +362,7 @@ export function Dashboard({ sessionId, addToast }: Props): React.JSX.Element {
                       marginTop: 1,
                     }}
                   >
-                    {a.action}
+                    {formatActionName(a.action)}
                   </span>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div

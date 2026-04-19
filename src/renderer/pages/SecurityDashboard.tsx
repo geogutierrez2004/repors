@@ -48,17 +48,13 @@ interface Props {
   addToast: AddToast;
 }
 
-export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Element {
+export function SecurityDashboard({ sessionId, user, addToast }: Props): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [integrity, setIntegrity] = useState<SecurityIntegrityStats | null>(null);
   const [thresholds, setThresholds] = useState<SecurityThresholdSettings>(DEFAULT_SECURITY_THRESHOLD_SETTINGS);
   const [settingsDraft, setSettingsDraft] = useState<SecurityThresholdSettings>(DEFAULT_SECURITY_THRESHOLD_SETTINGS);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [passwordLoading, setPasswordLoading] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const loadSessions = useCallback(async () => {
@@ -136,24 +132,6 @@ export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Ele
     }
   };
 
-  const handleChangePassword = async () => {
-    if (newPassword !== confirmPassword) {
-      addToast('error', 'New password and confirmation do not match');
-      return;
-    }
-    setPasswordLoading(true);
-    const res = await window.sccfs.auth.changePassword(sessionId, currentPassword, newPassword);
-    setPasswordLoading(false);
-    if (res.ok) {
-      addToast('success', 'Password updated');
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-    } else {
-      addToast('error', res.error?.message ?? 'Failed');
-    }
-  };
-
   const now = Date.now();
   const backupStatus = backupFreshness(integrity?.last_backup_at ?? null);
 
@@ -218,15 +196,18 @@ export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Ele
               subtitle={integrity?.last_backup_at ? `Last backup: ${fmtDateTime(integrity.last_backup_at)}` : 'Create first backup'}
               tone={backupStatus.color === '#16a34a' ? 'good' : backupStatus.color === '#d97706' ? 'warn' : 'danger'}
             />
-            <MetricCard
-              label="Auth Threat Events"
-              value={integrity ? String(integrity.lockout_events_24h) : '—'}
-              subtitle="ACCOUNT_LOCKED + LOGIN_FAILED (24h)"
-              tone={integrity && integrity.lockout_events_24h === 0 ? 'good' : 'danger'}
-            />
+            {user.role === 'admin' && (
+              <MetricCard
+                label="Auth Threat Events"
+                value={integrity ? String(integrity.lockout_events_24h) : '—'}
+                subtitle="Account locked + login fails (24h)"
+                tone={integrity && integrity.lockout_events_24h === 0 ? 'good' : 'danger'}
+              />
+            )}
           </div>
 
-          {/* Active sessions */}
+          {/* Active sessions (admin only) */}
+          {user.role === 'admin' && (
           <div style={{ ...cardStyle(), marginBottom: 20, padding: 0, overflow: 'hidden' }}>
             <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>
@@ -293,52 +274,13 @@ export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Ele
               </tbody>
             </table>
           </div>
+          )}
 
-          {/* Password + lockout activity */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-            {/* Password change */}
-            <div style={cardStyle()}>
-              <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, color: 'var(--text-primary)' }}>
-                🔑 Access Controls — Change Password
-              </h2>
-              <label style={labelStyle}>Current password</label>
-              <input
-                type="password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                style={inputStyle}
-              />
-              <label style={labelStyle}>New password</label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                style={inputStyle}
-              />
-              <label style={labelStyle}>Confirm new password</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                style={{ ...inputStyle, marginBottom: 12 }}
-              />
-              <p style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 12 }}>
-                Min 8 characters · uppercase · lowercase · digit · special character
-              </p>
-              <button
-                onClick={handleChangePassword}
-                disabled={passwordLoading}
-                style={btnStyle('primary', true)}
-              >
-                {passwordLoading ? 'Saving…' : 'Update Password'}
-              </button>
-            </div>
-
-            {/* Threshold settings */}
-            <div style={cardStyle()}>
-              <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, color: 'var(--text-primary)' }}>
-                🎚 Security Severity Thresholds
-              </h2>
+          {/* Threshold settings */}
+          <div style={{ ...cardStyle(), marginBottom: 20 }}>
+            <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, color: 'var(--text-primary)' }}>
+              🎚 Security Severity Thresholds
+            </h2>
               {settingsLoading ? (
                 <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Loading settings...</p>
               ) : (
@@ -394,7 +336,6 @@ export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Ele
                 </>
               )}
             </div>
-          </div>
 
           <div style={{ marginBottom: 20 }}>
             {/* Lockout chart */}
@@ -430,12 +371,12 @@ export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Ele
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-            <div style={cardStyle()}>
-              <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, color: 'var(--text-primary)' }}>
-                Upload Failure Breakdown (7d)
-              </h2>
-              {integrity && integrity.upload_failures_by_reason.length > 0 ? (
+          <div style={{ display: 'grid', gridTemplateColumns: integrity && integrity.upload_failures_by_reason.length > 0 ? '1fr 1fr' : '1fr', gap: 20 }}>
+            {integrity && integrity.upload_failures_by_reason.length > 0 && (
+              <div style={cardStyle()}>
+                <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, color: 'var(--text-primary)' }}>
+                  Upload Failure Breakdown (7d)
+                </h2>
                 <div style={{ display: 'grid', gap: 8 }}>
                   {integrity.upload_failures_by_reason.map((row) => (
                     <div key={row.reason} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
@@ -444,10 +385,8 @@ export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Ele
                     </div>
                   ))}
                 </div>
-              ) : (
-                <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>No failed upload events in the last 7 days.</p>
-              )}
-            </div>
+              </div>
+            )}
 
             <div style={cardStyle()}>
               <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, color: 'var(--text-primary)' }}>

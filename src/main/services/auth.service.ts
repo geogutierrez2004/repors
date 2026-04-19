@@ -30,6 +30,7 @@ function toSafeUser(u: UserRecord): SafeUser {
     username: u.username,
     role: u.role,
     is_active: !!u.is_active,
+    locked_until: u.locked_until,
     created_at: u.created_at,
     updated_at: u.updated_at,
   };
@@ -317,6 +318,16 @@ export class AuthService {
   // ── Seed default admin ───────────────
 
   async seedDefaultAdmin(username: string, password: string): Promise<void> {
+    // Check if seeding has already been done
+    const appState = this.db
+      .prepare('SELECT seeding_complete FROM _app_state WHERE id = ?')
+      .get('app') as { seeding_complete: number } | undefined;
+
+    if (appState?.seeding_complete === 1) {
+      // Seeding already completed; skip to avoid deleting user accounts
+      return;
+    }
+
     const users = this.db
       .prepare('SELECT id, username FROM users WHERE id != ? ORDER BY rowid ASC')
       .all(ANONYMOUS_UPLOAD_USER_ID) as Array<{ id: string; username: string }>;
@@ -330,51 +341,53 @@ export class AuthService {
            VALUES (?, ?, ?, ?)`,
         )
         .run(id, username, hash, Role.ADMIN);
-      return;
-    }
+    } else {
+      const preferredUser =
+        users.find((u) => u.username.toLowerCase() === username.toLowerCase()) ?? users[0];
+      const canonicalUserId = preferredUser.id;
+      const extraUserIds = users.filter((u) => u.id !== canonicalUserId).map((u) => u.id);
 
-    const preferredUser =
-      users.find((u) => u.username.toLowerCase() === username.toLowerCase()) ?? users[0];
-    const canonicalUserId = preferredUser.id;
-    const extraUserIds = users.filter((u) => u.id !== canonicalUserId).map((u) => u.id);
+      const consolidateTransaction = this.db.transaction(() => {
+        if (extraUserIds.length > 0) {
+          const placeholders = extraUserIds.map(() => '?').join(', ');
 
-    const consolidateTransaction = this.db.transaction(() => {
-      if (extraUserIds.length > 0) {
-        const placeholders = extraUserIds.map(() => '?').join(', ');
+          this.db
+            .prepare(`UPDATE shelves SET created_by = ? WHERE created_by IN (${placeholders})`)
+            .run(canonicalUserId, ...extraUserIds);
+          this.db
+            .prepare(`UPDATE files SET uploaded_by = ? WHERE uploaded_by IN (${placeholders})`)
+            .run(canonicalUserId, ...extraUserIds);
+          this.db
+            .prepare(`UPDATE upload_history SET user_id = ? WHERE user_id IN (${placeholders})`)
+            .run(canonicalUserId, ...extraUserIds);
+          this.db
+            .prepare(`UPDATE downloads SET user_id = ? WHERE user_id IN (${placeholders})`)
+            .run(canonicalUserId, ...extraUserIds);
+          this.db
+            .prepare(`UPDATE activity_log SET user_id = ? WHERE user_id IN (${placeholders})`)
+            .run(canonicalUserId, ...extraUserIds);
+
+          this.db.prepare(`DELETE FROM users WHERE id IN (${placeholders})`).run(...extraUserIds);
+        }
 
         this.db
-          .prepare(`UPDATE shelves SET created_by = ? WHERE created_by IN (${placeholders})`)
-          .run(canonicalUserId, ...extraUserIds);
-        this.db
-          .prepare(`UPDATE files SET uploaded_by = ? WHERE uploaded_by IN (${placeholders})`)
-          .run(canonicalUserId, ...extraUserIds);
-        this.db
-          .prepare(`UPDATE upload_history SET user_id = ? WHERE user_id IN (${placeholders})`)
-          .run(canonicalUserId, ...extraUserIds);
-        this.db
-          .prepare(`UPDATE downloads SET user_id = ? WHERE user_id IN (${placeholders})`)
-          .run(canonicalUserId, ...extraUserIds);
-        this.db
-          .prepare(`UPDATE activity_log SET user_id = ? WHERE user_id IN (${placeholders})`)
-          .run(canonicalUserId, ...extraUserIds);
+          .prepare(
+            `UPDATE users
+             SET username = ?, password_hash = ?, role = ?, is_active = 1, failed_attempts = 0, locked_until = NULL, updated_at = datetime('now')
+             WHERE id = ?`,
+          )
+          .run(username, hash, Role.ADMIN, canonicalUserId);
+      });
 
-        this.db.prepare(`DELETE FROM users WHERE id IN (${placeholders})`).run(...extraUserIds);
+      consolidateTransaction();
+      destroyUserSessions(canonicalUserId);
+      for (const userId of extraUserIds) {
+        destroyUserSessions(userId);
       }
-
-      this.db
-        .prepare(
-          `UPDATE users
-           SET username = ?, password_hash = ?, role = ?, is_active = 1, failed_attempts = 0, locked_until = NULL, updated_at = datetime('now')
-           WHERE id = ?`,
-        )
-        .run(username, hash, Role.ADMIN, canonicalUserId);
-    });
-
-    consolidateTransaction();
-    destroyUserSessions(canonicalUserId);
-    for (const userId of extraUserIds) {
-      destroyUserSessions(userId);
     }
+
+    // Mark seeding as complete
+    this.db.prepare('UPDATE _app_state SET seeding_complete = 1 WHERE id = ?').run('app');
   }
 
   // ── Private helpers ──────────────────
@@ -415,5 +428,16 @@ export class AuthService {
     this.db
       .prepare('INSERT INTO activity_log (id, user_id, action, detail) VALUES (?, ?, ?, ?)')
       .run(uuidv4(), userId, action, detail);
+  }
+
+  /**
+   * Public method to log audit events for user actions (uploads, deletions, backups).
+   * Stores structured audit data in activity_log with optional JSON details.
+   */
+  logAudit(userId: string, action: string, target: string, details?: Record<string, unknown>): void {
+    // For file operations, only show the human-readable target (filename), not technical details
+    const fileOperations = ['FILE_MOVE', 'FILE_RENAME', 'FILE_DELETE', 'FILE_DOWNLOAD', 'FILE_VIEW', 'FILE_UPLOAD', 'BACKUP_CREATE', 'BACKUP_RESTORE'];
+    const detailStr = fileOperations.includes(action) ? target : (details ? `${target}: ${JSON.stringify(details)}` : target);
+    this.logActivity(userId, action, detailStr);
   }
 }

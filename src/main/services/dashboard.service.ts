@@ -149,6 +149,7 @@ export class DashboardService {
 
   constructor(
     private db: Database.Database,
+    private authService: any, // Reference to AuthService for audit logging
     private readonly restoreExecutor?: (request: {
       backupDir: string;
       backupDbPath: string;
@@ -204,7 +205,7 @@ export class DashboardService {
   // ── Dashboard stats ──────────────────
 
   getStats(sessionId: string): DashboardStats {
-    requireAuth(sessionId);
+    const session = requireAuth(sessionId);
 
     const activeSessions = listSessions().length;
 
@@ -224,15 +225,20 @@ export class DashboardService {
       .prepare(`SELECT COUNT(*) as cnt FROM users WHERE locked_until IS NOT NULL AND locked_until > ?`)
       .get(Date.now()) as { cnt: number };
 
-    const recentActivity = this.db
-      .prepare(
-        `SELECT a.id, a.user_id, u.username, a.action, a.detail, a.created_at
+    // Staff can only see their own activities in the recent activity feed
+    let recentActivityQuery = `SELECT a.id, a.user_id, u.username, a.action, a.detail, a.created_at
          FROM activity_log a
-         LEFT JOIN users u ON a.user_id = u.id
-         ORDER BY a.created_at DESC
-         LIMIT 15`,
-      )
-      .all() as ActivityRecord[];
+         LEFT JOIN users u ON a.user_id = u.id`;
+    
+    if (session.role === 'staff') {
+      recentActivityQuery += ` WHERE a.user_id = ?`;
+    }
+    
+    recentActivityQuery += ` ORDER BY a.created_at DESC LIMIT 15`;
+    
+    const recentActivity = session.role === 'staff'
+      ? (this.db.prepare(recentActivityQuery).all(session.userId) as ActivityRecord[])
+      : (this.db.prepare(recentActivityQuery).all() as ActivityRecord[]);
 
     // Generate last 7 days with zeros for days without data
     const ops7dRaw = this.db
@@ -453,9 +459,12 @@ export class DashboardService {
         `SELECT f.id, f.original_name, f.stored_name, f.mime_type, f.size_bytes, f.sha256,
                 f.original_extension,
                 f.shelf_id, s.name as shelf_name,
-                f.is_encrypted, f.created_at, f.updated_at
+                f.is_encrypted, f.created_at, f.updated_at,
+                COALESCE(u.username, 'system') as uploaded_by
          FROM files f
          JOIN shelves s ON f.shelf_id = s.id
+         LEFT JOIN upload_history uh ON f.id = uh.file_id AND uh.status = 'completed'
+         LEFT JOIN users u ON uh.user_id = u.id
          ${where}
          ORDER BY f.created_at DESC
          LIMIT ? OFFSET ?`,
@@ -693,6 +702,14 @@ export class DashboardService {
           encrypt ? `Uploaded encrypted ${sourceName}` : `Uploaded ${sourceName}`,
         );
 
+        // Audit log: Record file upload with user accountability
+        this.authService.logAudit(session.userId, 'FILE_UPLOAD', sourceName, {
+          fileId,
+          size_bytes: stat.size,
+          shelf_id: shelfId,
+          encrypted: encrypt,
+        });
+
         item.success = true;
         item.file = this.getFileRecord(fileId);
         usedRow.total += stat.size;
@@ -755,7 +772,8 @@ export class DashboardService {
       .prepare('INSERT INTO downloads (id, file_id, user_id) VALUES (?, ?, ?)')
       .run(uuidv4(), fileId, session.userId);
 
-    this.logActivity(null, 'FILE_DOWNLOAD', `Downloaded ${fileRow.original_name}`);
+    // Audit log: Record file download with user accountability
+    this.authService.logAudit(session.userId, 'FILE_DOWNLOAD', fileRow.original_name);
   }
 
   async viewEncryptedFile(
@@ -763,7 +781,7 @@ export class DashboardService {
     fileId: string,
     decryptionPassword: string,
   ): Promise<SecureTempViewResult> {
-    requireAuth(sessionId);
+    const session = requireAuth(sessionId);
 
     const fileRow = this.db
       .prepare('SELECT * FROM files WHERE id = ?')
@@ -797,7 +815,10 @@ export class DashboardService {
     const contentBase64 = fs.readFileSync(tempFilePath).toString('base64');
     this.secureViewTempById.set(viewId, { tempDir, tempFilePath });
     this.scheduleSecureTempViewCleanup(viewId, tempDir);
-    this.logActivity(null, 'FILE_VIEW', `Viewed encrypted ${fileRow.original_name}`);
+
+    // Audit log: Record secure view access with user accountability
+    this.authService.logAudit(session.userId, 'FILE_VIEW', fileRow.original_name);
+
     return {
       viewId,
       fileName: this.resolveDownloadFileName(fileRow),
@@ -829,7 +850,12 @@ export class DashboardService {
   }
 
   deleteFile(sessionId: string, fileId: string): void {
-    requireAuth(sessionId);
+    const session = requireAuth(sessionId);
+
+    // Only admins can delete files
+    if (session.role === 'staff') {
+      throw new AuthError('PERMISSION_DENIED', 'Staff cannot delete files');
+    }
 
     const fileRow = this.db
       .prepare('SELECT * FROM files WHERE id = ?')
@@ -869,14 +895,19 @@ export class DashboardService {
       fs.unlinkSync(payloadToDeletePath);
     }
 
-    this.logActivity(null, 'FILE_DELETE', `Deleted ${fileRow.original_name}`);
+    // Audit log: Record file deletion with user accountability
+    this.authService.logAudit(session.userId, 'FILE_DELETE', fileRow.original_name, {
+      fileId,
+      size_bytes: fileRow.size_bytes,
+      shelf_id: fileRow.shelf_id,
+    });
   }
 
   moveFile(sessionId: string, fileId: string, targetShelfId: string): FileRecord {
-    requireAuth(sessionId);
+    const session = requireAuth(sessionId);
 
-    const fileRow = this.db.prepare('SELECT id, original_name FROM files WHERE id = ?').get(fileId) as
-      | { id: string; original_name: string }
+    const fileRow = this.db.prepare('SELECT id, original_name, shelf_id, size_bytes FROM files WHERE id = ?').get(fileId) as
+      | { id: string; original_name: string; shelf_id: string; size_bytes: number }
       | undefined;
     if (!fileRow) throw new AuthError('NOT_FOUND', 'File not found');
 
@@ -887,7 +918,40 @@ export class DashboardService {
       .prepare("UPDATE files SET shelf_id = ?, updated_at = datetime('now') WHERE id = ?")
       .run(targetShelfId, fileId);
 
-    this.logActivity(null, 'FILE_MOVE', `Moved ${fileRow.original_name} to new shelf`);
+    // Audit log: Record file move with user accountability
+    this.authService.logAudit(session.userId, 'FILE_MOVE', fileRow.original_name, {
+      fileId,
+      from_shelf_id: fileRow.shelf_id,
+      to_shelf_id: targetShelfId,
+    });
+
+    return this.getFileRecord(fileId);
+  }
+
+  renameFile(sessionId: string, fileId: string, newName: string): FileRecord {
+    const session = requireAuth(sessionId);
+
+    const fileRow = this.db.prepare('SELECT id, original_name, shelf_id FROM files WHERE id = ?').get(fileId) as
+      | { id: string; original_name: string; shelf_id: string }
+      | undefined;
+    if (!fileRow) throw new AuthError('NOT_FOUND', 'File not found');
+
+    const normalizedNewName = newName.trim();
+    if (!normalizedNewName) {
+      throw new AuthError('INVALID_NAME', 'File name cannot be empty');
+    }
+
+    this.db
+      .prepare("UPDATE files SET original_name = ?, updated_at = datetime('now') WHERE id = ?")
+      .run(normalizedNewName, fileId);
+
+    // Audit log: Record file rename with user accountability
+    this.authService.logAudit(session.userId, 'FILE_RENAME', fileRow.original_name, {
+      fileId,
+      new_name: normalizedNewName,
+      shelf_id: fileRow.shelf_id,
+    });
+
     return this.getFileRecord(fileId);
   }
 
@@ -927,8 +991,17 @@ export class DashboardService {
     return this.getShelfRecord(id);
   }
 
-  deleteShelf(sessionId: string, shelfId: string): void {
+  deleteShelf(
+    sessionId: string,
+    shelfId: string,
+    opts?: { action?: 'move' | 'temp'; targetShelfId?: string },
+  ): void {
     const session = requireAuth(sessionId);
+
+    // Only admins can delete shelves
+    if (session.role === 'staff') {
+      throw new AuthError('PERMISSION_DENIED', 'Staff cannot delete folders');
+    }
 
     const shelf = this.db.prepare('SELECT * FROM shelves WHERE id = ?').get(shelfId) as
       | { id: string; name: string; is_system: number }
@@ -936,16 +1009,55 @@ export class DashboardService {
     if (!shelf) throw new AuthError('NOT_FOUND', 'Shelf not found');
     if (shelf.is_system) throw new AuthError('SYSTEM_SHELF', 'System shelves cannot be deleted');
 
-    // Move files to Inbox
-    const inbox = this.db.prepare('SELECT id FROM shelves WHERE name = ?').get('Inbox') as
-      | { id: string }
-      | undefined;
-    if (inbox) {
-      this.db.prepare("UPDATE files SET shelf_id = ?, updated_at = datetime('now') WHERE shelf_id = ?").run(inbox.id, shelfId);
+    const files = this.db
+      .prepare('SELECT COUNT(*) as cnt FROM files WHERE shelf_id = ?')
+      .get(shelfId) as { cnt: number };
+
+    let targetShelfId: string | undefined;
+
+    if (files.cnt > 0) {
+      if (opts?.action === 'move' && opts?.targetShelfId) {
+        // Move files to specified folder
+        targetShelfId = opts.targetShelfId;
+        const targetShelf = this.db.prepare('SELECT id FROM shelves WHERE id = ?').get(targetShelfId);
+        if (!targetShelf) {
+          throw new AuthError('NOT_FOUND', 'Target shelf not found');
+        }
+        this.db
+          .prepare("UPDATE files SET shelf_id = ?, updated_at = datetime('now') WHERE shelf_id = ?")
+          .run(targetShelfId, shelfId);
+        this.logActivity(
+          session.userId,
+          'SHELF_DELETE',
+          `Deleted shelf "${shelf.name}" and moved ${files.cnt} file(s) to target folder`,
+        );
+      } else if (opts?.action === 'temp') {
+        // Create temporary folder with timestamp
+        const tempFolderName = `${shelf.name} (archived ${new Date().toISOString().split('T')[0]})`;
+        const tempId = uuidv4();
+        this.db
+          .prepare(
+            "INSERT INTO shelves (id, name, is_system, created_at, updated_at) VALUES (?, ?, 0, datetime('now'), datetime('now'))",
+          )
+          .run(tempId, tempFolderName);
+        this.db
+          .prepare("UPDATE files SET shelf_id = ?, updated_at = datetime('now') WHERE shelf_id = ?")
+          .run(tempId, shelfId);
+        this.logActivity(
+          session.userId,
+          'SHELF_DELETE',
+          `Deleted shelf "${shelf.name}" and archived ${files.cnt} file(s) to "${tempFolderName}"`,
+        );
+      } else {
+        // No action specified but there are files - shouldn't happen if frontend validates
+        throw new AuthError('INVALID_REQUEST', 'Must specify action for shelf with contents');
+      }
+    } else {
+      // No files, just delete
+      this.logActivity(session.userId, 'SHELF_DELETE', `Deleted shelf "${shelf.name}"`);
     }
 
     this.db.prepare('DELETE FROM shelves WHERE id = ?').run(shelfId);
-    this.logActivity(session.userId, 'SHELF_DELETE', `Deleted shelf "${shelf.name}"`);
   }
 
   renameShelf(sessionId: string, shelfId: string, name: string): ShelfRecord {
@@ -970,6 +1082,24 @@ export class DashboardService {
     return this.getShelfRecord(shelfId);
   }
 
+  getShelfContents(sessionId: string, shelfId: string): { fileCount: number; files: string[] } {
+    requireAuth(sessionId);
+
+    const shelf = this.db.prepare('SELECT * FROM shelves WHERE id = ?').get(shelfId) as
+      | { id: string; name: string }
+      | undefined;
+    if (!shelf) throw new AuthError('NOT_FOUND', 'Shelf not found');
+
+    const files = this.db
+      .prepare('SELECT id, original_name FROM files WHERE shelf_id = ? ORDER BY created_at DESC')
+      .all(shelfId) as Array<{ id: string; original_name: string }>;
+
+    return {
+      fileCount: files.length,
+      files: files.map((f) => f.original_name),
+    };
+  }
+
   // ── Activity log ─────────────────────
 
   listActivity(
@@ -983,10 +1113,16 @@ export class DashboardService {
       pageSize: number;
     },
   ): PaginatedResult<ActivityRecord> {
-    requireAuth(sessionId);
+    const session = requireAuth(sessionId);
 
     let where = 'WHERE 1=1';
     const params: unknown[] = [];
+
+    // Staff can only see their own activities
+    if (session.role === 'staff') {
+      where += ' AND a.user_id = ?';
+      params.push(session.userId);
+    }
 
     if (opts.userId) {
       where += ' AND a.user_id = ?';
@@ -1076,6 +1212,97 @@ export class DashboardService {
       .run(String(quotaBytes));
   }
 
+  // ── System drive status ──────────────
+
+  getSystemStorageStatus(sessionId: string): Array<{
+    drive: string;
+    usedPercent: number;
+    warningLevel: 'ok' | 'warning' | 'critical';
+  }> {
+    requireAuth(sessionId);
+
+    const WARN_THRESHOLD = 75;
+    const CRITICAL_THRESHOLD = 90;
+    const osDrive = process.env['SCCFS_OS_DRIVE'] || 
+      (process.platform === 'win32' ? 'C:' : '/');
+
+    const driveStatuses: Array<{
+      drive: string;
+      usedPercent: number;
+      warningLevel: 'ok' | 'warning' | 'critical';
+    }> = [];
+
+    try {
+      if (process.platform === 'win32') {
+        // Windows: check all drive letters A-Z
+        for (let charCode = 65; charCode <= 90; charCode++) {
+          const drive = String.fromCharCode(charCode) + ':';
+          const drivePath = drive + '\\';
+          
+          // Skip OS drive
+          if (drive.toUpperCase() === osDrive.toUpperCase().replace(/\\$/, '')) continue;
+          
+          try {
+            // Check if drive exists first
+            if (!fs.existsSync(drivePath)) continue;
+            
+            const stat = fs.statfsSync(drivePath);
+            const total = Number(stat.blocks) * Number(stat.bsize);
+            const available = Number(stat.bavail) * Number(stat.bsize);
+            
+            if (total <= 0) continue;
+            
+            const used = total - available;
+            const usedPercent = (used / total) * 100;
+
+            if (usedPercent >= CRITICAL_THRESHOLD) {
+              driveStatuses.push({ drive, usedPercent: Math.round(usedPercent), warningLevel: 'critical' });
+            } else if (usedPercent >= WARN_THRESHOLD) {
+              driveStatuses.push({ drive, usedPercent: Math.round(usedPercent), warningLevel: 'warning' });
+            }
+          } catch (e) {
+            // Drive not available or not readable, silently skip
+          }
+        }
+      } else {
+        // Linux/macOS: check root and common mount points
+        const mountPoints = [
+          '/',
+          '/home',
+          '/mnt',
+          '/media',
+          '/Volumes',
+        ].filter((mp) => mp !== osDrive && fs.existsSync(mp));
+
+        for (const mountPoint of mountPoints) {
+          try {
+            const stat = fs.statfsSync(mountPoint);
+            const total = Number(stat.blocks) * Number(stat.bsize);
+            const available = Number(stat.bavail) * Number(stat.bsize);
+            
+            if (total <= 0) continue;
+            
+            const used = total - available;
+            const usedPercent = (used / total) * 100;
+
+            if (usedPercent >= CRITICAL_THRESHOLD) {
+              driveStatuses.push({ drive: mountPoint, usedPercent: Math.round(usedPercent), warningLevel: 'critical' });
+            } else if (usedPercent >= WARN_THRESHOLD) {
+              driveStatuses.push({ drive: mountPoint, usedPercent: Math.round(usedPercent), warningLevel: 'warning' });
+            }
+          } catch (e) {
+            // Mount point not accessible, silently skip
+          }
+        }
+      }
+    } catch (e) {
+      // Outer try catch for platform detection issues
+      // Silently return whatever drives we found so far
+    }
+
+    return driveStatuses;
+  }
+
   // ── Backup / restore ─────────────────
 
   async backup(sessionId: string, win: BrowserWindow): Promise<{ path: string }> {
@@ -1133,6 +1360,15 @@ export class DashboardService {
         },
       };
       fs.writeFileSync(backupMetaPath, JSON.stringify(meta, null, 2), 'utf-8');
+
+      this.logActivity(session.userId, 'STORAGE_BACKUP', `Backup created at ${path.basename(backupDir)}`);
+
+      // Audit log: Record backup creation with user accountability
+      this.authService.logAudit(session.userId, 'BACKUP_CREATE', path.basename(backupDir), {
+        backup_path: backupDir,
+        file_count: totals.file_count,
+        total_bytes: totals.total_bytes,
+      });
     } catch (e) {
       if (!backupDirExisted && fs.existsSync(backupDir)) {
         fs.rmSync(backupDir, { recursive: true, force: true });
@@ -1140,7 +1376,6 @@ export class DashboardService {
       throw e;
     }
 
-    this.logActivity(session.userId, 'STORAGE_BACKUP', `Backup created at ${path.basename(backupDir)}`);
     return { path: backupDir };
   }
 
@@ -1200,6 +1435,11 @@ export class DashboardService {
   /** Log a successful restore operation in the activity log. */
   logStorageRestoreActivity(userId: string, backupDirName: string): void {
     this.logActivity(userId, 'STORAGE_RESTORE', `Backup restored from ${backupDirName}`);
+
+    // Audit log: Record backup restore with user accountability
+    this.authService.logAudit(userId, 'BACKUP_RESTORE', backupDirName, {
+      restored_at: new Date().toISOString(),
+    });
   }
 
   // ── Sessions (security dashboard) ────

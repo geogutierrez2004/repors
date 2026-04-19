@@ -20,9 +20,11 @@ import {
   FileViewEncryptedSchema,
   FileViewEncryptedCleanupSchema,
   FileDeleteSchema,
+  FileRenameSchema,
   FileMoveSchema,
   ShelfCreateSchema,
   ShelfDeleteSchema,
+  ShelfCheckContentsSchema,
   ShelfRenameSchema,
   ActivityListSchema,
   StorageSetQuotaSchema,
@@ -71,6 +73,7 @@ const DASHBOARD_CHANNELS = [
   IPC_CHANNELS.FILES_VIEW_ENCRYPTED_CLEANUP,
   IPC_CHANNELS.FILES_DELETE,
   IPC_CHANNELS.FILES_MOVE,
+  IPC_CHANNELS.FILES_RENAME,
   IPC_CHANNELS.SHELVES_LIST,
   IPC_CHANNELS.SHELVES_CREATE,
   IPC_CHANNELS.SHELVES_DELETE,
@@ -219,6 +222,16 @@ export function registerDashboardHandlers(
       }
     }));
 
+  ipcMain.handle(IPC_CHANNELS.FILES_RENAME, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId, fileId, newName } = FileRenameSchema.parse(payload);
+        return ok(dashboardService.renameFile(sessionId, fileId, newName));
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
+
   // ── Shelves ──────────────────────────
   ipcMain.handle(IPC_CHANNELS.SHELVES_LIST, (_event, payload: unknown) =>
     guard(async () => {
@@ -243,9 +256,19 @@ export function registerDashboardHandlers(
   ipcMain.handle(IPC_CHANNELS.SHELVES_DELETE, (_event, payload: unknown) =>
     guard(async () => {
       try {
-        const { sessionId, shelfId } = ShelfDeleteSchema.parse(payload);
-        dashboardService.deleteShelf(sessionId, shelfId);
+        const { sessionId, shelfId, action, targetShelfId } = ShelfDeleteSchema.parse(payload);
+        dashboardService.deleteShelf(sessionId, shelfId, { action, targetShelfId });
         return ok(null);
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
+
+  ipcMain.handle(IPC_CHANNELS.SHELVES_CHECK_CONTENTS, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId, shelfId } = ShelfCheckContentsSchema.parse(payload);
+        return ok(dashboardService.getShelfContents(sessionId, shelfId));
       } catch (e) {
         return handleError(e);
       }
@@ -313,6 +336,16 @@ export function registerDashboardHandlers(
         const win = getSenderWindow(event);
         await dashboardService.restore(sessionId, win);
         return ok(null);
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
+
+  ipcMain.handle(IPC_CHANNELS.STORAGE_DRIVE_STATUS, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId } = SessionIdOnlySchema.parse(payload);
+        return ok(dashboardService.getSystemStorageStatus(sessionId));
       } catch (e) {
         return handleError(e);
       }

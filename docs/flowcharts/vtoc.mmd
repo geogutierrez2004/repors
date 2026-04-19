@@ -7,11 +7,13 @@ flowchart TB
   A --> A3["1.3 Role-based Navigation"]
 
   ROOT --> B["2️⃣ File Operations Layer"]
-  B --> B1["2.1 Upload & Encrypt"]
+  B --> B1["2.1 Upload & Encrypt (dialog/drag-drop)"]
+  B --> B1a["2.1a Batch Upload Summary Modal"]
   B --> B2["2.2 Choose Encryption"]
   B --> B3["2.3 Download & Decrypt"]
   B --> B4["2.4 Temporary Secure View"]
-  B --> B5["2.5 Delete & Move"]
+  B --> B5["2.5 File Management (Move/Delete)"]
+  B --> B5a["2.5a Rename File"]
 
   ROOT --> C["3️⃣ Organization Layer"]
   C --> C1["3.1 Folder Listing"]
@@ -21,10 +23,11 @@ flowchart TB
 
   ROOT --> D["4️⃣ Security Layer"]
   D --> D1["4.1 Password Policies"]
-  D --> D2["4.2 RBAC Enforcement"]
+  D --> D2["4.2 RBAC Enforcement (Admin/Staff)"]
+  D --> D2a["4.2a View-Only Mode (Staff Users)"]
   D --> D3["4.3 AES-256-GCM Encryption"]
   D --> D4["4.4 Temp File Cleanup"]
-  D --> D5["4.5 IPC Validation"]
+  D --> D5["4.5 IPC Validation & Permission Checks"]
 
   ROOT --> E["5️⃣ Data Layer"]
   E --> E1["5.1 SQLite Database"]
@@ -52,4 +55,4 @@ flowchart TB
   
   class ROOT root
   class A,B,C,D,E,F,G layer
-  class A1,A2,A3,B1,B2,B3,B4,B5,C1,C2,C3,C4,D1,D2,D3,D4,D5,E1,E2,E3,E4,E5,F1,F2,F3,F4,F5,G1,G2,G3,G4 sublayer
+  class A1,A2,A3,B1,B1a,B2,B3,B4,B5,B5a,C1,C2,C3,C4,D1,D2,D2a,D3,D4,D5,E1,E2,E3,E4,E5,F1,F2,F3,F4,F5,G1,G2,G3,G4 sublayer

@@ -136,6 +136,9 @@ const api = {
 
     move: (sessionId: string, fileId: string, shelfId: string) =>
       safeInvoke<FileRecord>(IPC_CHANNELS.FILES_MOVE, { sessionId, fileId, shelfId }),
+
+    rename: (sessionId: string, fileId: string, newName: string) =>
+      safeInvoke<FileRecord>(IPC_CHANNELS.FILES_RENAME, { sessionId, fileId, newName }),
   },
 
   shelves: {
@@ -145,8 +148,14 @@ const api = {
     create: (sessionId: string, name: string) =>
       safeInvoke<ShelfRecord>(IPC_CHANNELS.SHELVES_CREATE, { sessionId, name }),
 
-    delete: (sessionId: string, shelfId: string) =>
-      safeInvoke(IPC_CHANNELS.SHELVES_DELETE, { sessionId, shelfId }),
+    delete: (sessionId: string, shelfId: string, opts?: { action?: 'move' | 'temp'; targetShelfId?: string }) =>
+      safeInvoke(IPC_CHANNELS.SHELVES_DELETE, { sessionId, shelfId, ...opts }),
+
+    checkContents: (sessionId: string, shelfId: string) =>
+      safeInvoke<{ fileCount: number; files: string[] }>(IPC_CHANNELS.SHELVES_CHECK_CONTENTS, {
+        sessionId,
+        shelfId,
+      }),
 
     rename: (sessionId: string, shelfId: string, name: string) =>
       safeInvoke<ShelfRecord>(IPC_CHANNELS.SHELVES_RENAME, { sessionId, shelfId, name }),
@@ -184,6 +193,12 @@ const api = {
 
     restore: (sessionId: string) =>
       safeInvoke(IPC_CHANNELS.STORAGE_RESTORE, { sessionId }),
+
+    getDriveStatus: (sessionId: string) =>
+      safeInvoke<Array<{ drive: string; usedPercent: number; warningLevel: 'ok' | 'warning' | 'critical' }>>(
+        IPC_CHANNELS.STORAGE_DRIVE_STATUS,
+        { sessionId },
+      ),
   },
 
   sessions: {

@@ -102,7 +102,12 @@ declare global {
       shelves: {
         list(sessionId: string): Promise<IpcResponse<ShelfRecord[]>>;
         create(sessionId: string, name: string): Promise<IpcResponse<ShelfRecord>>;
-        delete(sessionId: string, shelfId: string): Promise<IpcResponse<null>>;
+        delete(
+          sessionId: string,
+          shelfId: string,
+          opts?: { action?: 'move' | 'temp'; targetShelfId?: string },
+        ): Promise<IpcResponse<null>>;
+        checkContents(sessionId: string, shelfId: string): Promise<IpcResponse<{ fileCount: number; files: string[] }>>;
         rename(
           sessionId: string,
           shelfId: string,

@@ -12,7 +12,6 @@ export function createMainWindow(): BrowserWindow {
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    fullscreen: true,
     show: false,
     title: 'St. Clare College Filing System',
     webPreferences: {
@@ -47,6 +46,7 @@ export function createMainWindow(): BrowserWindow {
 
   // Show window after content is loaded
   win.once('ready-to-show', () => {
+    win.maximize();
     win.show();
   });
 

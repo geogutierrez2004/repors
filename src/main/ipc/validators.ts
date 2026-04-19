@@ -151,6 +151,12 @@ export const FileDeleteSchema = z.object({
   fileId: z.string().uuid(),
 });
 
+export const FileRenameSchema = z.object({
+  sessionId: z.string().uuid(),
+  fileId: z.string().uuid(),
+  newName: z.string().min(1).max(255),
+});
+
 export const FileMoveSchema = z.object({
   sessionId: z.string().uuid(),
   fileId: z.string().uuid(),
@@ -163,6 +169,13 @@ export const ShelfCreateSchema = z.object({
 });
 
 export const ShelfDeleteSchema = z.object({
+  sessionId: z.string().uuid(),
+  shelfId: z.string().uuid(),
+  action: z.enum(['move', 'temp']).optional(),
+  targetShelfId: z.string().uuid().optional(),
+});
+
+export const ShelfCheckContentsSchema = z.object({
   sessionId: z.string().uuid(),
   shelfId: z.string().uuid(),
 });

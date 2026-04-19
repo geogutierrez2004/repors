@@ -35,6 +35,14 @@ const ACTION_COLORS: Record<string, string> = {
   CREATE_USER: '#15803d', DELETE_USER: '#dc2626', UPDATE_USER: '#d97706',
 };
 
+function formatActionName(action: string): string {
+  return action
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
+    .replace(/Shelf/g, 'Folder');
+}
+
 function fmtDateTime(ts: string): string {
   return new Date(ts).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' });
 }
@@ -45,18 +53,19 @@ function fmtDateTime(ts: string): string {
 
 function ActivityHeatmap({ items }: { items: ActivityRecord[] }) {
   const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const HOURS = Array.from({ length: 24 }, (_, i) => i);
+  const TIME_BUCKETS = ['00-03', '04-07', '08-11', '12-15', '16-19', '20-23', 'Night'];
 
-  // Build count matrix [day][hour]
-  const matrix = Array.from({ length: 7 }, () => new Array<number>(24).fill(0));
+  // Build count matrix [day][timeBucket] where time buckets are 4-hour intervals
+  const matrix = Array.from({ length: 7 }, () => new Array<number>(7).fill(0));
   let max = 0;
 
   for (const item of items) {
     const d = new Date(item.created_at);
     const day = d.getDay();
     const hour = d.getHours();
-    matrix[day][hour]++;
-    if (matrix[day][hour] > max) max = matrix[day][hour];
+    const bucket = Math.floor(hour / 4); // 0-5 for hours, then 6 for "night" (optional)
+    matrix[day][bucket]++;
+    if (matrix[day][bucket] > max) max = matrix[day][bucket];
   }
 
   const cellColor = (count: number): string => {
@@ -70,24 +79,25 @@ function ActivityHeatmap({ items }: { items: ActivityRecord[] }) {
 
   return (
     <div style={{ overflowX: 'auto' }}>
-      <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
+      <div style={{ display: 'flex', gap: 2, marginBottom: 2 }}>
         <div style={{ width: 32 }} />
-        {HOURS.map((h) => (
+        {TIME_BUCKETS.map((t) => (
           <div
-            key={h}
+            key={t}
             style={{
-              width: 18,
-              fontSize: 9,
+              width: 20,
+              fontSize: 7,
               textAlign: 'center',
               color: 'var(--text-secondary)',
+              fontWeight: 600,
             }}
           >
-            {h % 4 === 0 ? h : ''}
+            {t}
           </div>
         ))}
       </div>
       {DAYS.map((day, di) => (
-        <div key={day} style={{ display: 'flex', gap: 4, marginBottom: 4, alignItems: 'center' }}>
+        <div key={day} style={{ display: 'flex', gap: 2, marginBottom: 2, alignItems: 'center' }}>
           <div
             style={{
               width: 32,
@@ -99,15 +109,15 @@ function ActivityHeatmap({ items }: { items: ActivityRecord[] }) {
           >
             {day}
           </div>
-          {HOURS.map((h) => (
+          {TIME_BUCKETS.map((_t, bi) => (
             <div
-              key={h}
-              title={`${day} ${h}:00 — ${matrix[di][h]} events`}
+              key={bi}
+              title={`${day} ${TIME_BUCKETS[bi]} — ${matrix[di][bi]} events`}
               style={{
-                width: 18,
-                height: 18,
-                borderRadius: 3,
-                background: cellColor(matrix[di][h]),
+                width: 20,
+                height: 20,
+                borderRadius: 2,
+                background: cellColor(matrix[di][bi]),
                 border: '1px solid var(--border)',
               }}
             />
@@ -115,7 +125,7 @@ function ActivityHeatmap({ items }: { items: ActivityRecord[] }) {
         </div>
       ))}
       <div
-        style={{ fontSize: 10, color: 'var(--text-secondary)', marginTop: 4, textAlign: 'right' }}
+        style={{ fontSize: 9, color: 'var(--text-secondary)', marginTop: 2, textAlign: 'right' }}
       >
         ← less · more →&nbsp;
         <span
@@ -138,10 +148,11 @@ function ActivityHeatmap({ items }: { items: ActivityRecord[] }) {
 // ────────────────────────────────────────
 
 function exportCsv(items: ActivityRecord[]) {
-  const header = 'Timestamp,Action,Detail';
+  const header = 'Timestamp,User,Action,Detail';
   const rows = items.map((a) =>
     [
       `"${a.created_at}"`,
+      `"${(a.username ?? '—').replace(/"/g, '""')}"`,
       `"${a.action}"`,
       `"${(a.detail ?? '').replace(/"/g, '""')}"`,
     ].join(','),
@@ -303,7 +314,7 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
           >
             <option value="">All Actions</option>
             {ACTIONS.map((a) => (
-              <option key={a} value={a}>{a}</option>
+              <option key={a} value={a}>{formatActionName(a)}</option>
             ))}
           </select>
         </div>
@@ -346,7 +357,7 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--bg-hover)', borderBottom: '1px solid var(--border)' }}>
-                  {['Timestamp', 'Action', 'Detail'].map((h) => (
+                  {['Timestamp', 'User', 'Action', 'Detail'].map((h) => (
                     <th key={h} style={thStyle()}>{h}</th>
                   ))}
                 </tr>
@@ -354,13 +365,13 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={3} style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}>
+                    <td colSpan={4} style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}>
                       Loading…
                     </td>
                   </tr>
                 ) : result.items.length === 0 ? (
                   <tr>
-                    <td colSpan={3} style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}>
+                    <td colSpan={4} style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}>
                       No activity records found
                     </td>
                   </tr>
@@ -369,6 +380,9 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
                     <tr key={a.id} style={{ borderBottom: '1px solid var(--border)' }}>
                       <td style={{ ...tdStyle(), color: 'var(--text-secondary)', whiteSpace: 'nowrap', fontSize: 12 }}>
                         {fmtDateTime(a.created_at)}
+                      </td>
+                      <td style={{ ...tdStyle(), color: 'var(--text-secondary)', fontSize: 12, fontWeight: 500 }}>
+                        {a.username ?? '—'}
                       </td>
                       <td style={tdStyle()}>
                         <span
@@ -382,7 +396,7 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
                             whiteSpace: 'nowrap',
                           }}
                         >
-                          {a.action}
+                          {formatActionName(a.action)}
                         </span>
                       </td>
                       <td style={{ ...tdStyle(), color: 'var(--text-secondary)', maxWidth: 360 }}>
@@ -432,7 +446,7 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
         {/* Heatmap */}
         <div
           className="no-print"
-          style={{ ...cardStyle(), minWidth: 520 }}
+          style={{ ...cardStyle(), minWidth: 220, maxHeight: 300, overflowY: 'auto' }}
         >
           <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 14, color: 'var(--text-primary)' }}>
             Activity Heatmap (recent 100 events)

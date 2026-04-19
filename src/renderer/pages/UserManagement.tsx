@@ -488,7 +488,7 @@ export function UserManagement({ sessionId, user, addToast }: Props): React.JSX.
                         >
                           🔑
                         </button>
-                        {!u.is_active && (
+                        {(!u.is_active || (u.locked_until && Date.now() < u.locked_until)) && (
                           <button
                             onClick={() => handleUnlock(u)}
                             style={btnStyle('ghost', true)}
