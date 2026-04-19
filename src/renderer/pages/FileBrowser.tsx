@@ -56,7 +56,11 @@ function readFileAsBase64(file: File): Promise<string> {
         reject(new Error('Unexpected file reader result.'));
         return;
       }
-      const base64 = result.includes(',') ? result.split(',')[1] ?? '' : result;
+      const base64 = result.includes(',') ? result.split(',')[1] : result;
+      if (!base64) {
+        reject(new Error('Unable to extract file payload.'));
+        return;
+      }
       resolve(base64);
     };
     reader.readAsDataURL(file);
@@ -544,8 +548,13 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       return;
     }
     try {
+      const sourceName = file.name.trim();
+      if (!sourceName) {
+        addToast('error', 'Selected file name is invalid.');
+        return;
+      }
       const staged: StagedUploadFile = {
-        source_name: file.name || 'unnamed-file',
+        source_name: sourceName,
         mime_type: file.type || null,
         size_bytes: file.size,
         content_base64: await readFileAsBase64(file),
@@ -609,7 +618,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     setIsDragOverUploadZone(false);
     const droppedFile = event.dataTransfer.files[0];
     if (!droppedFile) {
-      addToast('error', 'Dropped files could not be resolved. Please use the Upload button.');
+      addToast('error', 'No file detected in drop. Please ensure you are dropping a file.');
       return;
     }
     await handleFileSelected(droppedFile);

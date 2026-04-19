@@ -101,6 +101,20 @@ function computeSha256Buffer(data: Buffer): string {
   return hash.digest('hex');
 }
 
+function decodeBase64Strict(payload: string): Buffer {
+  const normalized = payload.trim().replace(/-/g, '+').replace(/_/g, '/');
+  if (!normalized || !/^[A-Za-z0-9+/]+={0,2}$/.test(normalized) || normalized.length % 4 === 1) {
+    throw new AuthError('INVALID_UPLOAD_DATA', 'Invalid staged file payload.');
+  }
+  const decoded = Buffer.from(normalized, 'base64');
+  const roundTripped = decoded.toString('base64').replace(/=+$/g, '');
+  const expected = normalized.replace(/=+$/g, '');
+  if (roundTripped !== expected) {
+    throw new AuthError('INVALID_UPLOAD_DATA', 'Invalid staged file payload.');
+  }
+  return decoded;
+}
+
 async function copyStream(sourcePath: string, destinationPath: string): Promise<void> {
   await pipeline(fs.createReadStream(sourcePath), fs.createWriteStream(destinationPath));
 }
@@ -498,7 +512,7 @@ export class DashboardService {
       .prepare('SELECT COALESCE(SUM(size_bytes), 0) as total FROM files')
       .get() as { total: number };
 
-    const selectedStagedFiles = stagedFiles?.filter((file) => file.source_name.trim()) ?? [];
+    const selectedStagedFiles = stagedFiles ?? [];
     let selectedFilePaths = filePaths;
     if (selectedStagedFiles.length === 0 && (!selectedFilePaths || selectedFilePaths.length === 0)) {
       const selected = await dialog.showOpenDialog(win, {
@@ -518,12 +532,18 @@ export class DashboardService {
     > = [];
     if (selectedStagedFiles.length > 0) {
       for (const stagedFile of selectedStagedFiles) {
-        const bytes = Buffer.from(stagedFile.content_base64, 'base64');
-        if (bytes.length === 0) continue;
+        const sourceName = stagedFile.source_name.trim();
+        if (!sourceName) {
+          throw new AuthError('INVALID_UPLOAD_DATA', 'Invalid staged file name.');
+        }
+        const bytes = decodeBase64Strict(stagedFile.content_base64);
+        if (bytes.length === 0) {
+          throw new AuthError('INVALID_UPLOAD_DATA', `Staged file "${sourceName}" is empty.`);
+        }
         uploadSources.push({
           kind: 'staged',
-          sourcePath: stagedFile.source_name,
-          sourceName: stagedFile.source_name,
+          sourcePath: sourceName,
+          sourceName,
           bytes,
           mimeType: stagedFile.mime_type ?? null,
         });
