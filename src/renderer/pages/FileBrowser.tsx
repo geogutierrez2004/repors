@@ -48,7 +48,7 @@ function fmtBytes(b: number): string {
 }
 
 function fmtDate(ts: string): string {
-  return new Date(ts).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+  return new Date(ts).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 }
 
 // ────────────────────────────────────────
@@ -214,6 +214,8 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   } | null>(null);
   const [contentsAction, setContentsAction] = useState<'move' | 'temp' | null>(null);
   const [newFolderName, setNewFolderName] = useState('');
+  const [sortBy, setSortBy] = useState<'name' | 'date'>('name');
+  const [sortAsc, setSortAsc] = useState(true);
   const resizeStartRef = useRef<{
     mouseX: number;
     mouseY: number;
@@ -272,6 +274,26 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     () => (viewer ? getPreviewKind(viewer.mimeType, viewer.fileName) : 'fallback'),
     [viewer],
   );
+
+  // Sort files by name or date
+  const sortedFiles = useMemo(() => {
+    const sorted = [...files.items];
+    if (sortBy === 'name') {
+      sorted.sort((a, b) => {
+        const aName = a.original_name.toLowerCase();
+        const bName = b.original_name.toLowerCase();
+        return sortAsc ? aName.localeCompare(bName) : bName.localeCompare(aName);
+      });
+    } else if (sortBy === 'date') {
+      sorted.sort((a, b) => {
+        const aDate = new Date(a.created_at).getTime();
+        const bDate = new Date(b.created_at).getTime();
+        return sortAsc ? aDate - bDate : bDate - aDate;
+      });
+    }
+    return sorted;
+  }, [files.items, sortBy, sortAsc]);
+
   const conversionSettled = isConvertedKind(previewKind) && !conversionLoading && !conversionError;
   const viewerDataUrl = useMemo(() => {
     if (!viewer) return '';
@@ -1230,11 +1252,55 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                       onChange={toggleAll}
                     />
                   </th>
-                  <th style={thStyle()}>Name</th>
+                  <th style={thStyle()}>
+                    <button
+                      onClick={() => {
+                        if (sortBy === 'name') {
+                          setSortAsc(!sortAsc);
+                        } else {
+                          setSortBy('name');
+                          setSortAsc(true);
+                        }
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: 'inherit',
+                        padding: 0,
+                        font: 'inherit',
+                      }}
+                      title="Click to sort by name"
+                    >
+                      Name {sortBy === 'name' && (sortAsc ? '↑' : '↓')}
+                    </button>
+                  </th>
                   <th style={thStyle(100)}>Folder</th>
                   <th style={thStyle(90)}>Size</th>
                   <th style={thStyle(60)}>Enc.</th>
-                  <th style={thStyle(130)}>Uploaded</th>
+                  <th style={thStyle(130)}>
+                    <button
+                      onClick={() => {
+                        if (sortBy === 'date') {
+                          setSortAsc(!sortAsc);
+                        } else {
+                          setSortBy('date');
+                          setSortAsc(false);
+                        }
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: 'inherit',
+                        padding: 0,
+                        font: 'inherit',
+                      }}
+                      title="Click to sort by upload date"
+                    >
+                      Uploaded {sortBy === 'date' && (sortAsc ? '↑' : '↓')}
+                    </button>
+                  </th>
                   <th style={thStyle(90)}>By</th>
                   <th style={thStyle(120)}>Actions</th>
                 </tr>
@@ -1252,14 +1318,14 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                 ) : files.items.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}
                     >
                       {search ? 'No files match your search' : 'No files in this folder yet'}
                     </td>
                   </tr>
                 ) : (
-                  files.items.map((f: FileRecord) => (
+                  sortedFiles.map((f: FileRecord) => (
                     <tr
                       key={f.id}
                       style={{

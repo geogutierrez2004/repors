@@ -16,12 +16,12 @@ describe('002-add-file-extension migration', () => {
         shelf_id      TEXT NOT NULL,
         uploaded_by   TEXT NOT NULL,
         is_encrypted  INTEGER NOT NULL DEFAULT 0,
-        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+        created_at    TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+        updated_at    TEXT NOT NULL DEFAULT (datetime('now', 'utc'))
       );
       CREATE TABLE _migrations (
         id        INTEGER PRIMARY KEY,
-        applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        applied_at TEXT NOT NULL DEFAULT (datetime('now', 'utc'))
       );
       INSERT INTO _migrations (id) VALUES (0);
     `);

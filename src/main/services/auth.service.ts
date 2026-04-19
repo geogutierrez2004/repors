@@ -256,12 +256,9 @@ export class AuthService {
       throw new AuthError('USER_NOT_FOUND', 'User not found');
     }
 
-    const admins = this.db
-      .prepare('SELECT COUNT(*) as cnt FROM users WHERE role = ? AND id != ?')
-      .get(Role.ADMIN, userId) as { cnt: number };
-
-    if (user.role === Role.ADMIN && admins.cnt === 0) {
-      throw new AuthError('LAST_ADMIN', 'Cannot delete the last admin account');
+    // Prevent deletion of admin accounts
+    if (user.role === Role.ADMIN) {
+      throw new AuthError('PROTECTED_ADMIN', 'Cannot delete admin accounts');
     }
 
     this.db.prepare('DELETE FROM users WHERE id = ?').run(userId);
@@ -373,7 +370,7 @@ export class AuthService {
         this.db
           .prepare(
             `UPDATE users
-             SET username = ?, password_hash = ?, role = ?, is_active = 1, failed_attempts = 0, locked_until = NULL, updated_at = datetime('now')
+             SET username = ?, password_hash = ?, role = ?, is_active = 1, failed_attempts = 0, locked_until = NULL, updated_at = datetime('now', 'utc')
              WHERE id = ?`,
           )
           .run(username, hash, Role.ADMIN, canonicalUserId);

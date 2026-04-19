@@ -156,7 +156,6 @@ export interface DashboardStats {
   active_sessions: number;
   total_files: number;
   total_size_bytes: number;
-  pending_uploads: number;
   failed_uploads_24h: number;
   locked_accounts: number;
   recent_activity: ActivityRecord[];
@@ -168,7 +167,6 @@ export interface SecurityIntegrityStats {
   total_files: number;
   encrypted_files: number;
   unencrypted_files: number;
-  pending_uploads: number;
   failed_uploads_24h: number;
   failed_uploads_7d: number;
   storage_used_bytes: number;

@@ -30,7 +30,7 @@ function fmtTime(ts: number): string {
 }
 
 function fmtDateTime(ts: string): string {
-  return new Date(ts).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+  return new Date(ts).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 }
 
 function backupFreshness(lastBackupAt: string | null): { label: string; color: string } {

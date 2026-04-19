@@ -497,7 +497,7 @@ export function UserManagement({ sessionId, user, addToast }: Props): React.JSX.
                             🔓
                           </button>
                         )}
-                        {!isSelf && (
+                        {!isSelf && u.role !== 'admin' && (
                           <button
                             onClick={() => handleDelete(u)}
                             style={{ ...btnStyle('ghost', true), color: 'var(--danger)' }}

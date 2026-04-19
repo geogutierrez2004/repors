@@ -115,6 +115,28 @@ function extractErrorCode(error: unknown): string {
     : '';
 }
 
+/**
+ * Convert SQLite datetime strings to proper ISO format with UTC marker.
+ * SQLite's datetime('now', 'utc') returns "YYYY-MM-DD HH:MM:SS" format (space separator).
+ * Convert to ISO "YYYY-MM-DDTHH:MM:SSZ" so JavaScript treats as UTC.
+ */
+function ensureUTC(dateString: string | null): string {
+  if (!dateString) return new Date().toISOString();
+  // If already has Z or timezone offset, return as-is
+  if (dateString.includes('Z') || dateString.match(/[+-]\d{2}:\d{2}$/)) {
+    return dateString;
+  }
+  // Convert SQLite format "YYYY-MM-DD HH:MM:SS" to ISO "YYYY-MM-DDTHH:MM:SSZ"
+  if (dateString.match(/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}/)) {
+    return `${dateString.replace(' ', 'T')}Z`;
+  }
+  // If it looks like ISO format without Z (with T), add it
+  if (dateString.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)) {
+    return `${dateString}Z`;
+  }
+  return dateString;
+}
+
 function countFilesRecursive(dirPath: string): number {
   if (!fs.existsSync(dirPath)) return 0;
   let count = 0;
@@ -213,10 +235,6 @@ export class DashboardService {
       .prepare('SELECT COUNT(*) as cnt, COALESCE(SUM(size_bytes), 0) as total FROM files')
       .get() as { cnt: number; total: number };
 
-    const pendingRow = this.db
-      .prepare("SELECT COUNT(*) as cnt FROM upload_history WHERE status IN ('pending','in_progress')")
-      .get() as { cnt: number };
-
     const failedRow = this.db
       .prepare("SELECT COUNT(*) as cnt FROM upload_history WHERE status = 'failed' AND started_at >= datetime('now', '-1 day')")
       .get() as { cnt: number };
@@ -239,6 +257,12 @@ export class DashboardService {
     const recentActivity = session.role === 'staff'
       ? (this.db.prepare(recentActivityQuery).all(session.userId) as ActivityRecord[])
       : (this.db.prepare(recentActivityQuery).all() as ActivityRecord[]);
+
+    // Ensure all datetime strings are marked as UTC
+    const recentActivityWithUTC = recentActivity.map(a => ({
+      ...a,
+      created_at: ensureUTC(a.created_at),
+    } as ActivityRecord));
 
     // Generate last 7 days with zeros for days without data
     const ops7dRaw = this.db
@@ -282,10 +306,9 @@ export class DashboardService {
       active_sessions: activeSessions,
       total_files: fileRow.cnt,
       total_size_bytes: fileRow.total,
-      pending_uploads: pendingRow.cnt,
       failed_uploads_24h: failedRow.cnt,
       locked_accounts: lockedRow.cnt,
-      recent_activity: recentActivity,
+      recent_activity: recentActivityWithUTC,
       file_ops_7d,
     };
   }
@@ -312,9 +335,6 @@ export class DashboardService {
       : 0;
 
     const pendingUploads = this.db
-      .prepare("SELECT COUNT(*) as cnt FROM upload_history WHERE status IN ('pending','in_progress')")
-      .get() as { cnt: number };
-
     const failedUploads24h = this.db
       .prepare("SELECT COUNT(*) as cnt FROM upload_history WHERE status = 'failed' AND started_at >= datetime('now', '-1 day')")
       .get() as { cnt: number };
@@ -373,17 +393,19 @@ export class DashboardService {
       total_files: fileSecurity.total,
       encrypted_files: fileSecurity.encrypted ?? 0,
       unencrypted_files: fileSecurity.unencrypted ?? 0,
-      pending_uploads: pendingUploads.cnt,
       failed_uploads_24h: failedUploads24h.cnt,
       failed_uploads_7d: failedUploads7d.cnt,
       storage_used_bytes: fileSecurity.used_bytes,
       storage_quota_bytes: quotaBytes,
       storage_used_percent: storageUsedPercent,
       lockout_events_24h: lockoutEvents24h,
-      last_backup_at: backupRow.last_backup_at,
+      last_backup_at: ensureUTC(backupRow.last_backup_at),
       upload_failures_by_reason: failureReasons,
       threat_activity_by_hour: threatActivityByHour,
-      critical_events: criticalEvents,
+      critical_events: criticalEvents.map(e => ({
+        ...e,
+        created_at: ensureUTC(e.created_at),
+      } as ActivityRecord)),
     };
   }
 
@@ -471,7 +493,16 @@ export class DashboardService {
       )
       .all(...params, opts.pageSize, offset) as FileRecord[];
 
-    return { items, total, page: opts.page, pageSize: opts.pageSize };
+    return {
+      items: items.map(f => ({
+        ...f,
+        created_at: ensureUTC(f.created_at),
+        updated_at: ensureUTC(f.updated_at),
+      } as FileRecord)),
+      total,
+      page: opts.page,
+      pageSize: opts.pageSize,
+    };
   }
 
   async uploadFile(
@@ -628,7 +659,7 @@ export class DashboardService {
         const persistTransaction = this.db.transaction(() => {
           if (reusedPayload) {
             this.db
-              .prepare("UPDATE file_payloads SET ref_count = ref_count + 1, updated_at = datetime('now') WHERE id = ?")
+              .prepare("UPDATE file_payloads SET ref_count = ref_count + 1, updated_at = datetime('now', 'utc') WHERE id = ?")
               .run(payloadId);
           } else {
             this.db
@@ -670,7 +701,7 @@ export class DashboardService {
           this.db
             .prepare(
               `INSERT INTO upload_history (id, file_id, user_id, status, completed_at)
-               VALUES (?, ?, ?, 'completed', datetime('now'))`,
+               VALUES (?, ?, ?, 'completed', datetime('now', 'utc'))`,
             )
             .run(uuidv4(), fileId, session.userId);
         });
@@ -881,7 +912,7 @@ export class DashboardService {
             payloadToDeletePath = path.join(getFilesDir(), payload.stored_name);
           } else {
             this.db
-              .prepare("UPDATE file_payloads SET ref_count = ref_count - 1, updated_at = datetime('now') WHERE id = ?")
+              .prepare("UPDATE file_payloads SET ref_count = ref_count - 1, updated_at = datetime('now', 'utc') WHERE id = ?")
               .run(payload.id);
           }
         }
@@ -915,7 +946,7 @@ export class DashboardService {
     if (!shelf) throw new AuthError('NOT_FOUND', 'Target shelf not found');
 
     this.db
-      .prepare("UPDATE files SET shelf_id = ?, updated_at = datetime('now') WHERE id = ?")
+      .prepare("UPDATE files SET shelf_id = ?, updated_at = datetime('now', 'utc') WHERE id = ?")
       .run(targetShelfId, fileId);
 
     // Audit log: Record file move with user accountability
@@ -942,7 +973,7 @@ export class DashboardService {
     }
 
     this.db
-      .prepare("UPDATE files SET original_name = ?, updated_at = datetime('now') WHERE id = ?")
+      .prepare("UPDATE files SET original_name = ?, updated_at = datetime('now', 'utc') WHERE id = ?")
       .run(normalizedNewName, fileId);
 
     // Audit log: Record file rename with user accountability
@@ -960,7 +991,7 @@ export class DashboardService {
   listShelves(sessionId: string): ShelfRecord[] {
     requireAuth(sessionId);
 
-    return this.db
+    const shelves = this.db
       .prepare(
         `SELECT s.id, s.name, s.is_system, s.created_by, s.created_at, s.updated_at,
                 COUNT(f.id) as file_count,
@@ -971,6 +1002,12 @@ export class DashboardService {
          ORDER BY s.is_system DESC, s.name`,
       )
       .all() as ShelfRecord[];
+
+    return shelves.map(s => ({
+      ...s,
+      created_at: ensureUTC(s.created_at),
+      updated_at: ensureUTC(s.updated_at),
+    } as ShelfRecord));
   }
 
   createShelf(sessionId: string, name: string): ShelfRecord {
@@ -1024,7 +1061,7 @@ export class DashboardService {
           throw new AuthError('NOT_FOUND', 'Target shelf not found');
         }
         this.db
-          .prepare("UPDATE files SET shelf_id = ?, updated_at = datetime('now') WHERE shelf_id = ?")
+          .prepare("UPDATE files SET shelf_id = ?, updated_at = datetime('now', 'utc') WHERE shelf_id = ?")
           .run(targetShelfId, shelfId);
         this.logActivity(
           session.userId,
@@ -1037,11 +1074,11 @@ export class DashboardService {
         const tempId = uuidv4();
         this.db
           .prepare(
-            "INSERT INTO shelves (id, name, is_system, created_at, updated_at) VALUES (?, ?, 0, datetime('now'), datetime('now'))",
+            "INSERT INTO shelves (id, name, is_system, created_at, updated_at) VALUES (?, ?, 0, datetime('now', 'utc'), datetime('now', 'utc'))",
           )
           .run(tempId, tempFolderName);
         this.db
-          .prepare("UPDATE files SET shelf_id = ?, updated_at = datetime('now') WHERE shelf_id = ?")
+          .prepare("UPDATE files SET shelf_id = ?, updated_at = datetime('now', 'utc') WHERE shelf_id = ?")
           .run(tempId, shelfId);
         this.logActivity(
           session.userId,
@@ -1075,7 +1112,7 @@ export class DashboardService {
     if (existing) throw new AuthError('SHELF_EXISTS', 'A shelf with that name already exists');
 
     this.db
-      .prepare("UPDATE shelves SET name = ?, updated_at = datetime('now') WHERE id = ?")
+      .prepare("UPDATE shelves SET name = ?, updated_at = datetime('now', 'utc') WHERE id = ?")
       .run(name, shelfId);
 
     this.logActivity(session.userId, 'SHELF_RENAME', `Renamed shelf "${shelf.name}" to "${name}"`);
@@ -1155,7 +1192,15 @@ export class DashboardService {
       )
       .all(...params, opts.pageSize, offset) as ActivityRecord[];
 
-    return { items, total, page: opts.page, pageSize: opts.pageSize };
+    return {
+      items: items.map(a => ({
+        ...a,
+        created_at: ensureUTC(a.created_at),
+      } as ActivityRecord)),
+      total,
+      page: opts.page,
+      pageSize: opts.pageSize,
+    };
   }
 
   // ── Storage stats ─────────────────────
@@ -1485,7 +1530,7 @@ export class DashboardService {
   // ── Private helpers ──────────────────
 
   private getFileRecord(fileId: string): FileRecord {
-    return this.db
+    const record = this.db
       .prepare(
         `SELECT f.id, f.original_name, f.original_extension, f.stored_name, f.mime_type, f.size_bytes, f.sha256,
                 f.shelf_id, s.name as shelf_name,
@@ -1495,6 +1540,12 @@ export class DashboardService {
          WHERE f.id = ?`,
       )
       .get(fileId) as FileRecord;
+    
+    return {
+      ...record,
+      created_at: ensureUTC(record.created_at),
+      updated_at: ensureUTC(record.updated_at),
+    } as FileRecord;
   }
 
   private normalizeSecurityThresholdSettings(
@@ -1539,7 +1590,7 @@ export class DashboardService {
   }
 
   private getShelfRecord(shelfId: string): ShelfRecord {
-    return this.db
+    const record = this.db
       .prepare(
         `SELECT s.id, s.name, s.is_system, s.created_by, s.created_at, s.updated_at,
                 COUNT(f.id) as file_count,
@@ -1550,6 +1601,12 @@ export class DashboardService {
          GROUP BY s.id`,
       )
       .get(shelfId) as ShelfRecord;
+    
+    return {
+      ...record,
+      created_at: ensureUTC(record.created_at),
+      updated_at: ensureUTC(record.updated_at),
+    } as ShelfRecord;
   }
 
   private logActivity(userId: string | null, action: string, detail: string): void {

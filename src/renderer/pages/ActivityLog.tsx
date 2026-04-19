@@ -44,7 +44,7 @@ function formatActionName(action: string): string {
 }
 
 function fmtDateTime(ts: string): string {
-  return new Date(ts).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' });
+  return new Date(ts).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'medium' });
 }
 
 // ────────────────────────────────────────

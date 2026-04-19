@@ -135,11 +135,11 @@ function StorageBar({ used, quota }: { used: number; quota: number }) {
 
 function fmtTime(ts: string) {
   const d = new Date(ts);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
 function fmtDate(ts: string) {
-  return new Date(ts).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 }
 
 const ACTION_COLORS: Record<string, string> = {
@@ -272,12 +272,6 @@ export function Dashboard({ sessionId, user, addToast }: Props): React.JSX.Eleme
           label="Total Files"
           value={stats.total_files.toLocaleString()}
           subtitle={fmtBytes(stats.total_size_bytes)}
-        />
-        <KpiCard
-          icon="⏳"
-          label="Pending Uploads"
-          value={stats.pending_uploads}
-          alert={stats.pending_uploads > 0}
         />
         <KpiCard
           icon="🚨"
