@@ -44,14 +44,23 @@ export function validateEncryptionPasswords(password: string, confirmPassword: s
 export function extractDroppedFilePaths(dataTransfer: DataTransfer | null): string[] {
   if (!dataTransfer?.files) return [];
   const files = Array.from(dataTransfer.files);
-  const paths = files
-    .map((f) => {
+  return normalizeFilePaths(
+    files.map((f) => {
       const droppedFile = f as File & { path?: string; filePath?: string };
       return droppedFile.path ?? droppedFile.filePath ?? '';
-    })
-    .map((p) => p.trim())
-    .filter((p) => p.length > 0);
-  return Array.from(new Set(paths));
+    }),
+  );
+}
+
+function normalizeFilePaths(paths: unknown[]): string[] {
+  return Array.from(
+    new Set(
+      paths
+        .filter((p): p is string => typeof p === 'string')
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0),
+    ),
+  );
 }
 
 function fmtBytes(b: number): string {
@@ -926,15 +935,11 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     let filePaths = extractDroppedFilePaths(e.dataTransfer);
     if (filePaths.length === 0) {
       const preloadPaths = (window as any).getDroppedFiles?.() ?? [];
-      if (Array.isArray(preloadPaths)) {
-        filePaths = preloadPaths.filter((p: unknown): p is string => typeof p === 'string' && p.trim().length > 0);
-      }
+      filePaths = Array.isArray(preloadPaths) ? normalizeFilePaths(preloadPaths) : [];
     }
     if (filePaths.length === 0 && window.sccfs.dropZone) {
       const storedPaths = await window.sccfs.dropZone.getDroppedFiles().catch(() => []);
-      if (Array.isArray(storedPaths)) {
-        filePaths = storedPaths.filter((p): p is string => typeof p === 'string' && p.trim().length > 0);
-      }
+      filePaths = Array.isArray(storedPaths) ? normalizeFilePaths(storedPaths) : [];
     }
     if (filePaths.length === 0) {
       addToast('warning', 'No files were detected from the drop action.');

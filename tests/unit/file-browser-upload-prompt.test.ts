@@ -16,12 +16,22 @@ describe('FileBrowser upload encryption prompt', () => {
       files: [
         { path: '/tmp/a.pdf' },
         { filePath: '/tmp/b.docx' },
-        { path: '  /tmp/a.pdf  ' },
         { name: 'c.txt' },
       ],
     } as unknown as DataTransfer;
 
     expect(extractDroppedFilePaths(dataTransfer)).toEqual(['/tmp/a.pdf', '/tmp/b.docx']);
+  });
+
+  it('trims and deduplicates dropped file paths', () => {
+    const dataTransfer = {
+      files: [
+        { path: '/tmp/a.pdf' },
+        { path: '  /tmp/a.pdf  ' },
+      ],
+    } as unknown as DataTransfer;
+
+    expect(extractDroppedFilePaths(dataTransfer)).toEqual(['/tmp/a.pdf']);
   });
 
   it('returns empty drop paths when no dataTransfer is provided', () => {
