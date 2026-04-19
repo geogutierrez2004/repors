@@ -53,13 +53,6 @@ export class AuthError extends Error {
 export class AuthService {
   constructor(private db: Database.Database) {}
 
-  private throwSingleUserOnly(): never {
-    throw new AuthError(
-      'SINGLE_USER_ONLY',
-      'This system supports one static user account only',
-    );
-  }
-
   // ── Login ────────────────────────────
 
   async login(username: string, password: string): Promise<LoginResponse> {
@@ -163,15 +156,41 @@ export class AuthService {
     this.logActivity(row.id, 'CHANGE_PASSWORD', 'Password changed');
   }
 
-  // ── User CRUD (admin) ───────────────
+  // ── User CRUD (admin only) ─────────
 
   async createUser(
-    _sessionId: string,
-    _username: string,
-    _password: string,
-    _role: Role,
+    sessionId: string,
+    username: string,
+    password: string,
+    role: Role,
   ): Promise<SafeUser> {
-    this.throwSingleUserOnly();
+    this.requireAdmin(sessionId);
+
+    const existing = this.db
+      .prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE')
+      .get(username) as { id: string } | undefined;
+    if (existing) {
+      throw new AuthError('USERNAME_EXISTS', 'Username already exists');
+    }
+
+    const policy = validatePasswordPolicy(password);
+    if (!policy.valid) {
+      throw new AuthError('PASSWORD_POLICY', policy.violations.join('; '));
+    }
+
+    const hash = await hashPassword(password);
+    const id = uuidv4();
+    this.db
+      .prepare(
+        `INSERT INTO users (id, username, password_hash, role, is_active)
+         VALUES (?, ?, ?, ?, 1)`,
+      )
+      .run(id, username, hash, role);
+
+    const newUser = this.db.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRecord;
+    this.logActivity(newUser.id, 'USER_CREATED', `User ${username} created with role ${role}`);
+
+    return toSafeUser(newUser);
   }
 
   listUsers(sessionId: string): SafeUser[] {
@@ -184,23 +203,115 @@ export class AuthService {
   }
 
   updateUser(
-    _sessionId: string,
-    _userId: string,
-    _updates: { role?: Role; is_active?: boolean },
+    sessionId: string,
+    userId: string,
+    updates: { role?: Role; is_active?: boolean },
   ): SafeUser {
-    this.throwSingleUserOnly();
+    this.requireAdmin(sessionId);
+
+    const user = this.db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as
+      | UserRecord
+      | undefined;
+    if (!user) {
+      throw new AuthError('USER_NOT_FOUND', 'User not found');
+    }
+
+    const setClauses: string[] = [];
+    const values: (string | number)[] = [];
+
+    if (updates.role !== undefined) {
+      setClauses.push('role = ?');
+      values.push(updates.role);
+    }
+    if (updates.is_active !== undefined) {
+      setClauses.push('is_active = ?');
+      values.push(updates.is_active ? 1 : 0);
+    }
+
+    setClauses.push('updated_at = datetime(\'now\')');
+    values.push(userId);
+
+    this.db
+      .prepare(`UPDATE users SET ${setClauses.join(', ')} WHERE id = ?`)
+      .run(...values);
+
+    const updated = this.db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as UserRecord;
+    this.logActivity(updated.id, 'USER_UPDATED', `User ${user.username} updated`);
+
+    if (updates.is_active === false) {
+      destroyUserSessions(userId);
+    }
+
+    return toSafeUser(updated);
   }
 
-  deleteUser(_sessionId: string, _userId: string): void {
-    this.throwSingleUserOnly();
+  deleteUser(sessionId: string, userId: string): void {
+    this.requireAdmin(sessionId);
+
+    const user = this.db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as
+      | UserRecord
+      | undefined;
+    if (!user) {
+      throw new AuthError('USER_NOT_FOUND', 'User not found');
+    }
+
+    const admins = this.db
+      .prepare('SELECT COUNT(*) as cnt FROM users WHERE role = ? AND id != ?')
+      .get(Role.ADMIN, userId) as { cnt: number };
+
+    if (user.role === Role.ADMIN && admins.cnt === 0) {
+      throw new AuthError('LAST_ADMIN', 'Cannot delete the last admin account');
+    }
+
+    this.db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    this.logActivity(userId, 'USER_DELETED', `User ${user.username} deleted`);
+    destroyUserSessions(userId);
   }
 
-  async resetPassword(_sessionId: string, _userId: string, _newPassword: string): Promise<void> {
-    this.throwSingleUserOnly();
+  async resetPassword(sessionId: string, userId: string, newPassword: string): Promise<void> {
+    this.requireAdmin(sessionId);
+
+    const user = this.db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as
+      | UserRecord
+      | undefined;
+    if (!user) {
+      throw new AuthError('USER_NOT_FOUND', 'User not found');
+    }
+
+    const policy = validatePasswordPolicy(newPassword);
+    if (!policy.valid) {
+      throw new AuthError('PASSWORD_POLICY', policy.violations.join('; '));
+    }
+
+    const hash = await hashPassword(newPassword);
+    this.db
+      .prepare('UPDATE users SET password_hash = ?, updated_at = datetime(\'now\') WHERE id = ?')
+      .run(hash, userId);
+
+    this.logActivity(userId, 'PASSWORD_RESET', `Password reset for ${user.username}`);
+    destroyUserSessions(userId);
   }
 
-  unlockUser(_sessionId: string, _userId: string): SafeUser {
-    this.throwSingleUserOnly();
+  unlockUser(sessionId: string, userId: string): SafeUser {
+    this.requireAdmin(sessionId);
+
+    const user = this.db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as
+      | UserRecord
+      | undefined;
+    if (!user) {
+      throw new AuthError('USER_NOT_FOUND', 'User not found');
+    }
+
+    this.db
+      .prepare(
+        'UPDATE users SET failed_attempts = 0, locked_until = NULL, updated_at = datetime(\'now\') WHERE id = ?',
+      )
+      .run(userId);
+
+    this.logActivity(userId, 'USER_UNLOCKED', `User ${user.username} unlocked`);
+
+    const updated = this.db.prepare('SELECT * FROM users WHERE id = ?').get(userId) as UserRecord;
+    return toSafeUser(updated);
   }
 
   // ── Seed default admin ───────────────
@@ -271,6 +382,14 @@ export class AuthService {
   private requireAuth(sessionId: string): Session {
     const session = validateSession(sessionId);
     if (!session) throw new AuthError('INVALID_SESSION', 'Session expired or invalid');
+    return session;
+  }
+
+  private requireAdmin(sessionId: string): Session {
+    const session = this.requireAuth(sessionId);
+    if (session.role !== Role.ADMIN) {
+      throw new AuthError('FORBIDDEN', 'Only administrators can perform this action');
+    }
     return session;
   }
 
