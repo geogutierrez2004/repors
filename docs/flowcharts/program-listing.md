@@ -6,13 +6,13 @@ This document lists the major program modules and key responsibilities for the S
 ## Main Process Modules
 1. src/main/index.ts: Electron app bootstrap, handler registration, and lifecycle wiring.
 2. src/main/window.ts: Main BrowserWindow configuration, maximized window mode, and navigation hardening.
-3. src/main/database/index.ts: Migration runner and schema setup with seeding flag support.
-4. src/main/database/migrations/*.ts: Incremental schema evolution and data updates (including 005-add-seeding-flag).
+3. src/main/database/index.ts: Migration runner and schema setup with seeding flag support and UTC timestamp defaults.
+4. src/main/database/migrations/*.ts: Incremental schema evolution and data updates (including 005-add-seeding-flag). All datetime fields use datetime('now', 'utc') to store UTC time directly in the database.
 5. src/main/ipc/auth.handler.ts: Authentication IPC endpoints with audit logging.
 6. src/main/ipc/dashboard.handler.ts: Dashboard, files, activity, storage, session, and file management IPC endpoints.
 7. src/main/ipc/validators.ts: Zod schemas for IPC payload validation (including FILE_RENAME, SHELVES_CHECK_CONTENTS).
-8. src/main/services/auth.service.ts: Login/logout/password, single-user account controls, and audit logging (logAudit method).
-9. src/main/services/dashboard.service.ts: Core business logic for files, activity, storage, backup/restore, security integrity stats, and comprehensive audit logging for file operations (rename, move, delete).
+8. src/main/services/auth.service.ts: Login/logout/password, single-user account controls, audit logging (logAudit method), and admin account deletion protection (prevents admins from deleting other admin accounts).
+9. src/main/services/dashboard.service.ts: Core business logic for files, activity, storage, backup/restore, security integrity stats, and comprehensive audit logging for file operations (rename, move, delete). Includes ensureUTC() function to convert SQLite datetime format (YYYY-MM-DD HH:MM:SS) to ISO UTC format (YYYY-MM-DDTHH:MM:SSZ) for correct timezone handling in JavaScript.
 10. src/main/services/rbac.service.ts: Role-based access checks.
 11. src/main/services/session.service.ts: In-memory session management.
 12. src/main/restore/hot-swap.ts: Restore execution and state transition behavior.
@@ -31,7 +31,7 @@ This document lists the major program modules and key responsibilities for the S
 4. src/renderer/pages/ActivityLog.tsx: Audit list with username column, filters, natural-language action names, activity heatmap, and print/export with user attribution.
 5. src/renderer/pages/SecurityDashboard.tsx: Integrity metrics (admin-only), active sessions table (admin-only), and threshold settings for severity mapping.
 6. src/renderer/pages/StorageBackup.tsx: Quota, trend (in MB), storage by folder, backup, and restore workflows with improved chart formatting.
-7. src/renderer/pages/UserManagement.tsx: Single-user profile/admin controls with role-based unlock button visibility.
+7. src/renderer/pages/UserManagement.tsx: Single-user profile/admin controls with role-based unlock button visibility. Delete buttons are hidden for admin accounts to prevent accidental deletion by other admins.
 8. src/renderer/utils/document-preview.ts: MIME inference and conversion helpers.
 
 ## Test Modules
