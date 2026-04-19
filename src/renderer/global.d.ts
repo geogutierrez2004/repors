@@ -80,6 +80,7 @@ declare global {
           encryptionPassword?: string,
           sourceHandlingMode?: SourceHandlingMode,
           confirmPermanentDelete?: boolean,
+          dragDropFilePaths?: string[],
         ): Promise<IpcResponse<FileUploadResult>>;
         download(sessionId: string, fileId: string, decryptionPassword?: string): Promise<IpcResponse<null>>;
         viewEncrypted(
@@ -143,6 +144,10 @@ declare global {
 
       app: {
         onRestored(callback: (payload: { sessionInvalidated: boolean }) => void): () => void;
+      };
+
+      dropZone: {
+        getDroppedFiles(): Promise<string[]>;
       };
     };
   }

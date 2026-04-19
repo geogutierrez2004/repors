@@ -41,6 +41,19 @@ export function validateEncryptionPasswords(password: string, confirmPassword: s
   return null;
 }
 
+export function extractDroppedFilePaths(dataTransfer: DataTransfer | null): string[] {
+  if (!dataTransfer?.files) return [];
+  const files = Array.from(dataTransfer.files);
+  const paths = files
+    .map((f) => {
+      const droppedFile = f as File & { path?: string; filePath?: string };
+      return droppedFile.path ?? droppedFile.filePath ?? '';
+    })
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  return Array.from(new Set(paths));
+}
+
 function fmtBytes(b: number): string {
   if (b >= 1e9) return `${(b / 1e9).toFixed(2)} GB`;
   if (b >= 1e6) return `${(b / 1e6).toFixed(1)} MB`;
@@ -171,7 +184,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [uploadLoading, setUploadLoading] = useState(false);
-  const [sourceHandlingMode, setSourceHandlingMode] = useState<SourceHandlingMode>('ask_each_time');
+  const [sourceHandlingMode, setSourceHandlingMode] = useState<SourceHandlingMode>('keep_original');
   const [moveModal, setMoveModal] = useState<string[] | null>(null);
   const [newShelfName, setNewShelfName] = useState('');
   const [addingShelf, setAddingShelf] = useState(false);
@@ -905,13 +918,24 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     e.stopPropagation();
   };
 
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
     setIsDraggingFiles(false);
 
-    // Get file paths from the preload's dropped files storage (populated by drop event listener)
-    const filePaths = (window as any).getDroppedFiles?.() ?? [];
+    let filePaths = extractDroppedFilePaths(e.dataTransfer);
+    if (filePaths.length === 0) {
+      const preloadPaths = (window as any).getDroppedFiles?.() ?? [];
+      if (Array.isArray(preloadPaths)) {
+        filePaths = preloadPaths.filter((p: unknown): p is string => typeof p === 'string' && p.trim().length > 0);
+      }
+    }
+    if (filePaths.length === 0 && window.sccfs.dropZone) {
+      const storedPaths = await window.sccfs.dropZone.getDroppedFiles().catch(() => []);
+      if (Array.isArray(storedPaths)) {
+        filePaths = storedPaths.filter((p): p is string => typeof p === 'string' && p.trim().length > 0);
+      }
+    }
     if (filePaths.length === 0) {
       addToast('warning', 'No files were detected from the drop action.');
       return;

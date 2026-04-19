@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  extractDroppedFilePaths,
   validateEncryptionPasswords,
 } from '../../src/renderer/pages/FileBrowser';
 
@@ -8,5 +9,22 @@ describe('FileBrowser upload encryption prompt', () => {
     expect(validateEncryptionPasswords('', '')).toBe('Encryption password is required.');
     expect(validateEncryptionPasswords('abc', 'xyz')).toBe('Encryption passwords do not match.');
     expect(validateEncryptionPasswords('same', 'same')).toBeNull();
+  });
+
+  it('extracts drop file paths from electron file objects', () => {
+    const dataTransfer = {
+      files: [
+        { path: '/tmp/a.pdf' },
+        { filePath: '/tmp/b.docx' },
+        { path: '  /tmp/a.pdf  ' },
+        { name: 'c.txt' },
+      ],
+    } as unknown as DataTransfer;
+
+    expect(extractDroppedFilePaths(dataTransfer)).toEqual(['/tmp/a.pdf', '/tmp/b.docx']);
+  });
+
+  it('returns empty drop paths when no dataTransfer is provided', () => {
+    expect(extractDroppedFilePaths(null)).toEqual([]);
   });
 });
