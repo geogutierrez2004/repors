@@ -15,6 +15,7 @@ import {
   SecurityThresholdGetSchema,
   SecurityThresholdSetSchema,
   FileListSchema,
+  FilePickUploadSourcesSchema,
   FileUploadSchema,
   FileDownloadSchema,
   FileViewEncryptedSchema,
@@ -67,6 +68,7 @@ const DASHBOARD_CHANNELS = [
   IPC_CHANNELS.SECURITY_THRESHOLD_GET,
   IPC_CHANNELS.SECURITY_THRESHOLD_SET,
   IPC_CHANNELS.FILES_LIST,
+  IPC_CHANNELS.FILES_PICK_UPLOAD_SOURCES,
   IPC_CHANNELS.FILES_UPLOAD,
   IPC_CHANNELS.FILES_DOWNLOAD,
   IPC_CHANNELS.FILES_VIEW_ENCRYPTED,
@@ -143,6 +145,17 @@ export function registerDashboardHandlers(
       }
     }));
 
+  ipcMain.handle(IPC_CHANNELS.FILES_PICK_UPLOAD_SOURCES, (event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId } = FilePickUploadSourcesSchema.parse(payload);
+        const win = getSenderWindow(event);
+        return ok(await dashboardService.pickUploadSources(sessionId, win));
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
+
   ipcMain.handle(IPC_CHANNELS.FILES_UPLOAD, (event, payload: unknown) =>
     guard(async () => {
       try {
@@ -153,6 +166,7 @@ export function registerDashboardHandlers(
           encryptionPassword,
           sourceHandlingMode,
           confirmPermanentDelete,
+          sourceFilePaths,
         } = FileUploadSchema.parse(payload);
         const win = getSenderWindow(event);
         return ok(await dashboardService.uploadFile(
@@ -163,6 +177,7 @@ export function registerDashboardHandlers(
           sourceHandlingMode,
           confirmPermanentDelete,
           win,
+          sourceFilePaths,
         ));
       } catch (e) {
         return handleError(e);

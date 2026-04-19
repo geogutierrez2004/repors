@@ -7,6 +7,7 @@
  * - Only expose channels from the allowlist
  */
 import { contextBridge, ipcRenderer } from 'electron';
+import { webUtils } from 'electron';
 import { ALLOWED_CHANNELS } from '../shared/ipc-channels';
 import { IPC_CHANNELS } from '../shared/ipc-channels';
 import type {
@@ -105,6 +106,18 @@ const api = {
         pageSize: opts.pageSize ?? 25,
       }),
 
+    pickUploadSources: (sessionId: string) =>
+      safeInvoke<{ filePaths: string[] }>(IPC_CHANNELS.FILES_PICK_UPLOAD_SOURCES, { sessionId }),
+
+    getPathForFile: (file: File) => {
+      try {
+        const resolvedPath = webUtils.getPathForFile(file);
+        return resolvedPath || null;
+      } catch {
+        return null;
+      }
+    },
+
     upload: (
       sessionId: string,
       shelfId: string,
@@ -112,6 +125,7 @@ const api = {
       encryptionPassword?: string,
       sourceHandlingMode: SourceHandlingMode = 'keep_original',
       confirmPermanentDelete = false,
+      sourceFilePaths?: string[],
     ) =>
       safeInvoke<FileUploadResult>(IPC_CHANNELS.FILES_UPLOAD, {
         sessionId,
@@ -120,6 +134,7 @@ const api = {
         encryptionPassword,
         sourceHandlingMode,
         confirmPermanentDelete,
+        sourceFilePaths,
       }),
 
     download: (sessionId: string, fileId: string, decryptionPassword?: string) =>

@@ -73,6 +73,8 @@ declare global {
           sessionId: string,
           opts: { shelfId?: string; search?: string; page?: number; pageSize?: number },
         ): Promise<IpcResponse<PaginatedResult<FileRecord>>>;
+        pickUploadSources(sessionId: string): Promise<IpcResponse<{ filePaths: string[] }>>;
+        getPathForFile(file: File): string | null;
         upload(
           sessionId: string,
           shelfId: string,
@@ -80,6 +82,7 @@ declare global {
           encryptionPassword?: string,
           sourceHandlingMode?: SourceHandlingMode,
           confirmPermanentDelete?: boolean,
+          sourceFilePaths?: string[],
         ): Promise<IpcResponse<FileUploadResult>>;
         download(sessionId: string, fileId: string, decryptionPassword?: string): Promise<IpcResponse<null>>;
         viewEncrypted(

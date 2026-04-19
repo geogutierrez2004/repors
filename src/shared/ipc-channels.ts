@@ -27,6 +27,7 @@ export const IPC_CHANNELS = {
 
   // File management
   FILES_LIST: 'sccfs:files:list',
+  FILES_PICK_UPLOAD_SOURCES: 'sccfs:files:pick-upload-sources',
   FILES_UPLOAD: 'sccfs:files:upload',
   FILES_DOWNLOAD: 'sccfs:files:download',
   FILES_VIEW_ENCRYPTED: 'sccfs:files:view-encrypted',

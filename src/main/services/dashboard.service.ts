@@ -513,6 +513,7 @@ export class DashboardService {
     sourceHandlingMode: SourceHandlingMode,
     confirmPermanentDelete: boolean,
     win: BrowserWindow,
+    sourceFilePaths?: string[],
   ): Promise<FileUploadResult> {
     const session = requireAuth(sessionId);
 
@@ -529,15 +530,9 @@ export class DashboardService {
       .prepare('SELECT COALESCE(SUM(size_bytes), 0) as total FROM files')
       .get() as { total: number };
 
-    const { filePaths, canceled } = await dialog.showOpenDialog(win, {
-      title: 'Select File to Upload',
-      properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'All Files', extensions: ['*'] }],
-    });
-
-    if (canceled || filePaths.length === 0) {
-      throw new AuthError('CANCELLED', 'Upload cancelled');
-    }
+    const filePaths = sourceFilePaths && sourceFilePaths.length > 0
+      ? sourceFilePaths
+      : (await this.pickUploadSources(sessionId, win)).filePaths;
 
     const filesDir = getFilesDir();
     const resultItems: FileUploadItemResult[] = [];
@@ -762,6 +757,21 @@ export class DashboardService {
     }
 
     return { files: resultItems };
+  }
+
+  async pickUploadSources(sessionId: string, win: BrowserWindow): Promise<{ filePaths: string[] }> {
+    requireAuth(sessionId);
+    const { filePaths, canceled } = await dialog.showOpenDialog(win, {
+      title: 'Select File to Upload',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'All Files', extensions: ['*'] }],
+    });
+
+    if (canceled || filePaths.length === 0) {
+      throw new AuthError('CANCELLED', 'Upload cancelled');
+    }
+
+    return { filePaths };
   }
 
   async downloadFile(

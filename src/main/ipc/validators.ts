@@ -119,6 +119,7 @@ export const FileUploadSchema = z.object({
   encryptionPassword: z.string().min(1).max(1024).optional(),
   sourceHandlingMode: z.enum(['keep_original', 'move_to_system', 'ask_each_time']).default('keep_original'),
   confirmPermanentDelete: z.boolean().default(false),
+  sourceFilePaths: z.array(z.string().min(1)).optional(),
 }).superRefine((value, ctx) => {
   if (value.encrypt && !value.encryptionPassword?.trim()) {
     ctx.addIssue({
@@ -127,6 +128,10 @@ export const FileUploadSchema = z.object({
       message: 'Encryption password is required when encrypting upload',
     });
   }
+});
+
+export const FilePickUploadSourcesSchema = z.object({
+  sessionId: z.string().uuid(),
 });
 
 export const FileDownloadSchema = z.object({
