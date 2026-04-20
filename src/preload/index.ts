@@ -203,6 +203,9 @@ const api = {
     setQuota: (sessionId: string, quotaBytes: number) =>
       safeInvoke(IPC_CHANNELS.STORAGE_SET_QUOTA, { sessionId, quotaBytes }),
 
+    getMaxQuota: (sessionId: string) =>
+      safeInvoke<number>(IPC_CHANNELS.STORAGE_GET_MAX_QUOTA, { sessionId }),
+
     backup: (sessionId: string) =>
       safeInvoke<{ path: string }>(IPC_CHANNELS.STORAGE_BACKUP, { sessionId }),
 

@@ -49,6 +49,7 @@ export const IPC_CHANNELS = {
   // Storage & backup
   STORAGE_STATS: 'sccfs:storage:stats',
   STORAGE_SET_QUOTA: 'sccfs:storage:set-quota',
+  STORAGE_GET_MAX_QUOTA: 'sccfs:storage:get-max-quota',
   STORAGE_BACKUP: 'sccfs:storage:backup',
   STORAGE_RESTORE: 'sccfs:storage:restore',
   STORAGE_DRIVE_STATUS: 'sccfs:storage:drive-status',

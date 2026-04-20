@@ -83,6 +83,7 @@ const DASHBOARD_CHANNELS = [
   IPC_CHANNELS.ACTIVITY_LIST,
   IPC_CHANNELS.STORAGE_STATS,
   IPC_CHANNELS.STORAGE_SET_QUOTA,
+  IPC_CHANNELS.STORAGE_GET_MAX_QUOTA,
   IPC_CHANNELS.STORAGE_BACKUP,
   IPC_CHANNELS.STORAGE_RESTORE,
   IPC_CHANNELS.SESSIONS_LIST,
@@ -328,6 +329,16 @@ export function registerDashboardHandlers(
         const { sessionId, quotaBytes } = StorageSetQuotaSchema.parse(payload);
         dashboardService.setQuota(sessionId, quotaBytes);
         return ok(null);
+      } catch (e) {
+        return handleError(e);
+      }
+    }));
+
+  ipcMain.handle(IPC_CHANNELS.STORAGE_GET_MAX_QUOTA, (_event, payload: unknown) =>
+    guard(async () => {
+      try {
+        const { sessionId } = SessionIdOnlySchema.parse(payload);
+        return ok(dashboardService.getMaxQuotaAllowed(sessionId));
       } catch (e) {
         return handleError(e);
       }

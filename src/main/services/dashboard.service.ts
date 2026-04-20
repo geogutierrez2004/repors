@@ -1259,6 +1259,19 @@ export class DashboardService {
     };
   }
 
+  getMaxQuotaAllowed(sessionId: string): number {
+    requireAuth(sessionId);
+
+    try {
+      const stat = fs.statfsSync(getFilesDir(), { bigint: true });
+      const availableBytes = stat.bavail * stat.bsize;
+      const maxQuotaAllowed = (availableBytes * BigInt(90)) / 100n;
+      return Number(maxQuotaAllowed);
+    } catch (e) {
+      throw new AuthError('MAX_QUOTA_FAILED', 'Failed to determine maximum quota');
+    }
+  }
+
   setQuota(sessionId: string, quotaBytes: number): void {
     requireAuth(sessionId);
 
