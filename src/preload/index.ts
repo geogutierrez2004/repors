@@ -7,6 +7,7 @@
  * - Only expose channels from the allowlist
  */
 import { contextBridge, ipcRenderer } from 'electron';
+import { webUtils } from 'electron';
 import { ALLOWED_CHANNELS } from '../shared/ipc-channels';
 import { IPC_CHANNELS } from '../shared/ipc-channels';
 import type {
@@ -105,6 +106,18 @@ const api = {
         pageSize: opts.pageSize ?? 25,
       }),
 
+    pickUploadSources: (sessionId: string) =>
+      safeInvoke<{ filePaths: string[] }>(IPC_CHANNELS.FILES_PICK_UPLOAD_SOURCES, { sessionId }),
+
+    getPathForFile: (file: File) => {
+      try {
+        const resolvedPath = webUtils.getPathForFile(file);
+        return resolvedPath || null;
+      } catch {
+        return null;
+      }
+    },
+
     upload: (
       sessionId: string,
       shelfId: string,
@@ -112,7 +125,7 @@ const api = {
       encryptionPassword?: string,
       sourceHandlingMode: SourceHandlingMode = 'keep_original',
       confirmPermanentDelete = false,
-      dragDropFilePaths?: string[],
+      sourceFilePaths?: string[],
     ) =>
       safeInvoke<FileUploadResult>(IPC_CHANNELS.FILES_UPLOAD, {
         sessionId,
@@ -121,7 +134,7 @@ const api = {
         encryptionPassword,
         sourceHandlingMode,
         confirmPermanentDelete,
-        dragDropFilePaths,
+        sourceFilePaths,
       }),
 
     download: (sessionId: string, fileId: string, decryptionPassword?: string) =>
@@ -222,44 +235,9 @@ const api = {
       };
     },
   },
-
-  // Store dropped file paths
-  dropZone: {
-    getDroppedFiles: () => ipcRenderer.invoke('get-dropped-files'),
-  },
 };
 
-// Listen for drop events in the renderer and relay to main process
-let droppedFiles: string[] = [];
-document.addEventListener(
-  'drop',
-  (e) => {
-    if (e.dataTransfer?.files) {
-      const files = Array.from(e.dataTransfer.files);
-      // Try to extract file paths from File objects (Electron-specific)
-      const paths = files
-        .map((f: any) => {
-          // In Electron, dropped files have a .path property
-          if (f.path) return f.path;
-          // Fallback: try .filePath
-          if (f.filePath) return f.filePath;
-          // Last resort: use the name (won't work but better than nothing)
-          return null;
-        })
-        .filter((p): p is string => p !== null && p.length > 0);
-      if (paths.length > 0) {
-        droppedFiles = paths;
-        ipcRenderer.invoke('store-dropped-files', paths).catch(() => {
-          // Silently handle IPC errors
-        });
-      }
-    }
-  },
-  true,
-);
-
 contextBridge.exposeInMainWorld('sccfs', api);
-contextBridge.exposeInMainWorld('getDroppedFiles', () => droppedFiles);
 
 /** TypeScript declaration for renderer usage. */
 export type SccfsApi = typeof api;

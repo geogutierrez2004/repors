@@ -11,93 +11,200 @@ flowchart TD
   
   CheckSession -->|Yes| Dashboard
   
-  Dashboard --> UserChoice{User Action?}
+  Dashboard --> NavTabs{Which Tab?}
   
-  UserChoice -->|View Files| FileBrowser["📁 File Browser"]
-  FileBrowser --> ShowFolders["Display Folders"]
-  ShowShelves --> SelectFile{Select File?}
-  SelectFile -->|Cancel| Dashboard
+  NavTabs -->|FILES| FileBrowser["📁 File Browser"]
+  FileBrowser --> ShowShelves["Display Shelves<br/>(Exclude Archive/Inbox)"]
+  ShowShelves --> FileAction{Select Action?}
+  
+  FileAction -->|View Files| DisplayFiles["📋 Show Files in Shelf"]
+  DisplayFiles --> SelectFile{Select File?}
+  SelectFile -->|Cancel| FileBrowser
   SelectFile -->|Download| DownloadFlow["📥 Download"]
   SelectFile -->|Preview| PreviewFlow["👁️ Preview"]
+  SelectFile -->|Rename| RenameFlow["✏️ Rename"]
+  SelectFile -->|Move| MoveFlow["🔀 Move"]
+  SelectFile -->|Delete| DeleteFlow["🗑️ Delete"]
   
-  DownloadFlow --> SessionGuard1{Session<br/>Valid?}
+  FileAction -->|Upload| CheckRole{Admin or<br/>Staff?}
+  CheckRole -->|No Session| Dashboard
+  CheckRole -->|Admin| UploadAdmin["✅ Upload Allowed"]
+  CheckRole -->|Staff| UploadStaff["✅ Upload Allowed"]
+  UploadAdmin --> SelectUploadMethod
+  UploadStaff --> SelectUploadMethod
+  SelectUploadMethod{Upload Method?} -->|File Dialog| FileDialog["📂 Open File Dialog"]
+  SelectUploadMethod -->|Drag-Drop| DragDrop["🎯 Show Drop Zone"]
+  FileDialog --> SelectFiles["Select File(s)"]
+  DragDrop --> SelectFiles
+  SelectFiles --> CheckMultiple{Multiple?}
+  CheckMultiple -->|Yes| BatchModal["📋 Show Batch Summary<br/>Confirm All Files"]
+  CheckMultiple -->|No| CheckQuota
+  BatchModal --> ConfirmBatch{Confirm?}
+  ConfirmBatch -->|Cancel| FileBrowser
+  ConfirmBatch -->|OK| CheckQuota{Quota<br/>Available?}
+  CheckQuota -->|Exceeded| QuotaError["❌ Storage Full"]
+  QuotaError --> FileBrowser
+  CheckQuota -->|OK| SanitizeFilename["Sanitize Filename"]
+  SanitizeFilename --> EncryptChoice{Encrypt?}
+  EncryptChoice -->|No| StoreFile["Store to D3<br/>Plain"]
+  EncryptChoice -->|Yes| GetPassword["🔐 Enter Password"]
+  GetPassword --> ValidatePassPolicy{Password<br/>Policy Met?}
+  ValidatePassPolicy -->|Failed| PassError["❌ Password Too Weak"]
+  PassError --> GetPassword
+  ValidatePassPolicy -->|OK| GenSalt["Generate Salt/IV"]
+  GenSalt --> DeriveUploadKey["PBKDF2 Derive Key"]
+  DeriveUploadKey --> EncryptFile["Encrypt AES-256-GCM"]
+  EncryptFile --> StoreFile
+  StoreFile --> LogActivity["Log Upload Activity"]
+  LogActivity --> UploadComplete["✅ Upload Complete"]
+  UploadComplete --> FileBrowser
+  
+  DownloadFlow --> SessionGuard1{Session Valid?}
   SessionGuard1 -->|No| SessionDenied["🚫 Session Invalid"]
   SessionDenied --> Login
-  SessionGuard1 -->|Yes| GetFile["Fetch from D3<br/>Encrypted Payloads"]
-  GetFile --> NeedsPassword{Encrypted?}
-  NeedsPassword -->|Yes| PromptPass["Enter Password"]
+  SessionGuard1 -->|Yes| GetFile["Fetch from D3"]
+  GetFile --> IsEncrypted{Encrypted?}
+  IsEncrypted -->|No| StreamFile["Stream Plain File"]
+  IsEncrypted -->|Yes| PromptPass["🔐 Enter Password"]
   PromptPass --> DeriveKey["PBKDF2 Derive Key"]
-  NeedsPassword -->|No| DecryptFile["Retrieve Plain File"]
   DeriveKey --> VerifyAuth["Verify Auth Tag"]
-  VerifyAuth --> AuthOK{Auth Tag<br/>Valid?}
+  VerifyAuth --> AuthOK{Auth Tag Valid?}
   AuthOK -->|Failed| DecryptError["❌ Decryption Failed"]
   DecryptError --> Dashboard
   AuthOK -->|Success| DecryptAES["Decrypt AES-256-GCM"]
-  DecryptFile --> StreamFile["Stream to User"]
   DecryptAES --> StreamFile
-  StreamFile --> LogActivity1["Log Download"]
-  LogActivity1 --> Dashboard
+  StreamFile --> LogDownload["Log Download"]
+  LogDownload --> Dashboard
   
-  PreviewFlow --> SessionGuard2{Session<br/>Valid?}
+  PreviewFlow --> SessionGuard2{Session Valid?}
   SessionGuard2 -->|No| SessionDenied
-  SessionGuard2 -->|Yes| FetchEncrypted["Fetch Encrypted File"]
-  FetchEncrypted --> PreviewNeedsPass{Encrypted?}
-  PreviewNeedsPass -->|Yes| PreviewPromptPass["Enter Password"]
-  PreviewNeedsPass -->|No| PreviewPlain["Retrieve Plain File"]
-  PreviewPromptPass --> PreviewDeriveKey["PBKDF2 Derive Key"]
-  PreviewDeriveKey --> PreviewDecrypt["Decrypt AES-256-GCM"]
+  SessionGuard2 -->|Yes| FetchEncrypted["Fetch File"]
+  FetchEncrypted --> PreviewIsEncrypted{Encrypted?}
+  PreviewIsEncrypted -->|No| PreviewPlain["Retrieve Plain"]
+  PreviewIsEncrypted -->|Yes| PreviewPass["🔐 Enter Password"]
+  PreviewPass --> PreviewDerive["PBKDF2 Derive Key"]
+  PreviewDerive --> PreviewDecrypt["Decrypt AES-256-GCM"]
   PreviewDecrypt --> CreateTempFile["Write to D8<br/>Temp Files"]
   PreviewPlain --> CreateTempFile
   CreateTempFile --> InferMIME["Infer MIME Type"]
   InferMIME --> RenderType{File Type?}
   RenderType -->|PDF| PDFViewer["📄 PDF.js Viewer"]
-  RenderType -->|Image| ImgViewer["🖼️ Image Viewer<br/>CSP: data:/blob:"]
-  RenderType -->|DOCX| DocConverter["Mammoth Converter<br/>→ HTML"]
-  RenderType -->|XLSX| SheetConverter["read-excel-file<br/>→ HTML Table"]
-  RenderType -->|Text| TextViewer["📋 Text Preview"]
-  RenderType -->|Other| Fallback["⚠️ Unsupported<br/>Show Download Link"]
-  PDFViewer --> ShowPreview["🔒 Show in<br/>Secure Preview"]
+  RenderType -->|Image| ImgViewer["🖼️ Image Viewer"]
+  RenderType -->|DOCX| DocConverter["Mammoth<br/>→ HTML"]
+  RenderType -->|XLSX| SheetConverter["read-excel-file<br/>→ Table"]
+  RenderType -->|Text| TextViewer["📋 Text"]
+  RenderType -->|Other| Fallback["⚠️ Download Link"]
+  PDFViewer --> ShowPreview["🔒 Show Preview<br/>CSP-safe"]
   ImgViewer --> ShowPreview
   DocConverter --> ShowPreview
   SheetConverter --> ShowPreview
   TextViewer --> ShowPreview
   Fallback --> ShowPreview
   ShowPreview --> ScheduleDelete["Schedule Delete<br/>2min TTL"]
-  ScheduleDelete --> LogActivity2["Log Preview"]
-  LogActivity2 --> Dashboard
+  ScheduleDelete --> LogPreview["Log Preview"]
+  LogPreview --> Dashboard
   
-  UserChoice -->|Upload File| UploadFlow["📤 Upload"]
-  UploadFlow --> SessionGuard3{Session<br/>Valid?}
-  SessionGuard3 -->|No| SessionDenied
-  SessionGuard3 -->|Yes| CheckRole{Admin<br/>Role?}
-  CheckRole -->|No| RoleDenied["🚫 Permission Denied<br/>(View-Only)"]
-  RoleDenied --> Dashboard
-  CheckRole -->|Yes| SelectFileMethod{Upload Method?}
-  SelectFileMethod -->|File Dialog| SelectFile2["Open File Dialog"]
-  SelectFileMethod -->|Drag-Drop| DragDropFeedback["🎯 Show Drop Zone<br/>Visual Highlight"]
-  DragDropFeedback --> SelectFile2
-  SelectFile2 --> CheckMultiple{Multiple<br/>Files?}
-  CheckMultiple -->|Yes| BatchModal["📋 Show Batch Summary<br/>List All Files"]
-  CheckMultiple -->|No| CheckStorageLevel
-  BatchModal --> ConfirmBatch{Confirm<br/>Upload?}
-  ConfirmBatch -->|Cancel| Dashboard
-  ConfirmBatch -->|OK| CheckStorageLevel{Usage above<br/>warning threshold?}
-  CheckStorageLevel -->|Yes| StorageWarn["⚠️ Show Storage Warning"]
-  CheckStorageLevel -->|No| CheckQuota{Quota<br/>OK?}
-  StorageWarn --> CheckQuota
-  CheckQuota -->|Exceeded| QuotaError["❌ Storage Full"]
-  QuotaError --> Dashboard
-  CheckQuota -->|OK| SanitizeFilename["Sanitize Filename<br/>Remove Path Chars"]
-  SanitizeFilename --> EncryptChoice{Encrypt?}
-  EncryptChoice -->|No| StoreFile["Store to D3<br/>Plain"]
-  EncryptChoice -->|Yes| GetPassword["Enter Password"]
-  GetPassword --> ValidatePassPolicy{Pass Policy<br/>Met?}
-  ValidatePassPolicy -->|Failed| PassError["❌ Password Too Weak"]
-  PassError --> GetPassword
-  ValidatePassPolicy -->|OK| GenSalt["Generate Salt<br/>16 bytes"]
-  GenSalt --> GenIV["Generate IV<br/>12 bytes"]
-  GenIV --> DeriveUploadKey["PBKDF2 Derive Key"]
-  DeriveUploadKey --> EncryptFile["Encrypt AES-256-GCM"]
+  RenameFlow --> CheckRenameRole{Admin or<br/>Staff?}
+  CheckRenameRole -->|No| RenameNotAllowed["🚫 Not Allowed"]
+  RenameNotAllowed --> Dashboard
+  CheckRenameRole -->|Yes| PromptNewName["Enter New Name"]
+  PromptNewName --> SanitizeName["Sanitize Name"]
+  SanitizeName --> UpdateMetadata["Update D2"]
+  UpdateMetadata --> LogRename["Log Rename"]
+  LogRename --> Dashboard
+  
+  MoveFlow --> CheckMoveRole{Admin or<br/>Staff?}
+  CheckMoveRole -->|No| MoveNotAllowed["🚫 Not Allowed"]
+  MoveNotAllowed --> Dashboard
+  CheckMoveRole -->|Yes| SelectShelf["🗂️ Select Target Shelf"]
+  SelectShelf --> UpdateShelf["Update D4"]
+  UpdateShelf --> LogMove["Log Move"]
+  LogMove --> Dashboard
+  
+  DeleteFlow --> CheckDeleteRole{Admin<br/>Only?}
+  CheckDeleteRole -->|No| DeleteNotAllowed["🚫 Admin Only"]
+  DeleteNotAllowed --> Dashboard
+  CheckDeleteRole -->|Yes| ConfirmDelete["Confirm Delete?"]
+  ConfirmDelete -->|Cancel| Dashboard
+  ConfirmDelete -->|OK| DeleteFile["Remove from D3"]
+  DeleteFile --> DeleteMetadata["Remove from D2"]
+  DeleteMetadata --> LogDelete["Log Delete"]
+  LogDelete --> Dashboard
+  
+  NavTabs -->|ACTIVITY LOG| ActivityLog["📊 Activity Log"]
+  ActivityLog --> FilterActivity{Filter?}
+  FilterActivity -->|By User| FilterUser["Select User"]
+  FilterUser --> FilterDate["Select Date Range"]
+  FilterDate --> DisplayActivity["📋 Display Filtered<br/>Auto-apply filter"]
+  FilterActivity -->|By Type| FilterType["Select Operation"]
+  FilterType --> FilterDate
+  FilterActivity -->|None| DisplayActivity
+  DisplayActivity --> ExportLog["💾 Export CSV"]
+  ExportLog --> Dashboard
+  
+  NavTabs -->|SECURITY| SecurityDash["🔐 Security Dashboard"]
+  SecurityDash --> ShowIntegrity["Integrity Stats<br/>(Read-only)"]
+  ShowIntegrity --> ShowThresholds{Admin<br/>?}
+  ShowThresholds -->|Yes| EditThresholds["⚙️ Edit Thresholds"]
+  EditThresholds --> ApplyThresholds["Save Settings"]
+  ApplyThresholds --> Dashboard
+  ShowThresholds -->|No| Dashboard
+  
+  NavTabs -->|USERS| UserMgmt["👥 User Management"]
+  UserMgmt --> ShowMyAccount["📌 My Account Card<br/>(Current User)"]
+  ShowMyAccount --> ShowOtherUsers{Admin?}
+  ShowOtherUsers -->|Yes| ListUsers["📋 List Other Users"]
+  ListUsers --> UserOps{Action?}
+  UserOps -->|Update Role| UpdateRole["Edit User Role"]
+  UpdateRole --> SaveUser["Save Changes"]
+  SaveUser --> UserMgmt
+  UserOps -->|Change Pass| ChangePass["Enter Current Pass<br/>Twice (2FA)"]
+  ChangePass --> ValidatePass{Passwords<br/>Match?}
+  ValidatePass -->|No| PassMismatch["❌ Mismatch"]
+  PassMismatch --> ChangePass
+  ValidatePass -->|Yes| UpdatePass["Update in D1"]
+  UpdatePass --> UserMgmt
+  UserOps -->|Reset Pass| ResetPass["Send Reset Link"]
+  ResetPass --> UserMgmt
+  UserOps -->|Unlock| UnlockUser["Unlock Account"]
+  UnlockUser --> UserMgmt
+  ShowOtherUsers -->|No| Dashboard
+  
+  NavTabs -->|STORAGE| Storage["💾 Storage Management"]
+  Storage --> ShowStats["📈 Show Storage Stats"]
+  ShowStats --> ShowQuota{Admin?}
+  ShowQuota -->|Yes| EditQuota["⚙️ Set Quota"]
+  EditQuota --> SaveQuota["Save Quota"]
+  SaveQuota --> BackupRestore
+  ShowQuota -->|No| BackupRestore{Action?}
+  BackupRestore -->|Backup| BackupClick["Click Backup"]
+  BackupClick --> BackupModal["Confirmation Modal<br/>Backup will be<br/>exported to disk"]
+  BackupModal --> ConfirmBackup{Confirm?}
+  ConfirmBackup -->|Cancel| Storage
+  ConfirmBackup -->|OK| ExecuteBackup["Export DB<br/>Archive Payloads<br/>Compress + Sign"]
+  ExecuteBackup --> BackupComplete["✅ Backup Complete"]
+  BackupComplete --> Storage
+  BackupRestore -->|Restore| RestoreClick["Click Restore"]
+  RestoreClick --> RestoreFile["Select Archive File"]
+  RestoreFile --> RestoreModal["Confirmation Modal<br/>⚠️ WARNING:<br/>All current data<br/>will be replaced"]
+  RestoreModal --> ConfirmRestore{Confirm?}
+  ConfirmRestore -->|Cancel| Storage
+  ConfirmRestore -->|OK| ExecuteRestore["Extract Archive<br/>Verify Signature<br/>Restore DB<br/>Hot-Swap Handlers<br/>Invalidate Sessions"]
+  ExecuteRestore --> RestoreComplete["✅ Restore Complete<br/>Redirecting to Login"]
+  RestoreComplete --> Login
+  
+  classDef start fill:#c8e6c9,stroke:#2e7d32,stroke-width:3px,color:#000
+  classDef process fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
+  classDef decision fill:#ffccbc,stroke:#d84315,stroke-width:2px,color:#000
+  classDef error fill:#ffcdd2,stroke:#c62828,stroke-width:2px,color:#000
+  classDef success fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
+  classDef security fill:#e1bee7,stroke:#6a1b9a,stroke-width:2px,color:#000
+  
+  class Start,UploadComplete,BackupComplete,RestoreComplete,Dashboard success
+  class FileBrowser,Login,PreviewFlow,DownloadFlow,RenameFlow,MoveFlow,DeleteFlow,ActivityLog,SecurityDash,UserMgmt,Storage,Backup,Restore process
+  class CheckSession,NavTabs,FileAction,CheckRole,CheckMultiple,CheckQuota,EncryptChoice,IsEncrypted,AuthOK,RenderType,CheckRenameRole,CheckMoveRole,CheckDeleteRole,FilterActivity,ShowThresholds,ShowOtherUsers,UserOps,BackupRestore,ConfirmBackup,ConfirmRestore decision
+  class SessionDenied,LoginError,PassError,DecryptError,QuotaError,RenameNotAllowed,MoveNotAllowed,DeleteNotAllowed error
+  class GetPassword,EditThresholds,EditQuota,BackupModal,RestoreModal security
   EncryptFile --> StoreEncrypted["Store to D3<br/>with Auth Tag"]
   StoreFile --> SaveMetadata["Save Metadata<br/>to D2"]
   StoreEncrypted --> SaveMetadata

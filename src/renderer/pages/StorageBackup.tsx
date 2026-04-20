@@ -102,6 +102,92 @@ function SetQuotaModal({
 }
 
 // ────────────────────────────────────────
+// Confirmation modals
+// ────────────────────────────────────────
+
+function BackupConfirmModal({
+  onConfirm,
+  onCancel,
+  loading,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+  loading: boolean;
+}) {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,.4)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+      }}
+    >
+      <div style={{ ...cardStyle(), width: 400 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: 'var(--text-primary)' }}>
+          💾 Create Backup
+        </h3>
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.5 }}>
+          This will create a complete backup of all files and the database. The backup can be restored later if needed.
+        </p>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button onClick={onCancel} disabled={loading} style={btnStyle('secondary', true)}>
+            Cancel
+          </button>
+          <button onClick={onConfirm} disabled={loading} style={btnStyle('primary', true)}>
+            {loading ? 'Creating…' : 'Create Backup'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RestoreConfirmModal({
+  onConfirm,
+  onCancel,
+  loading,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+  loading: boolean;
+}) {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,.4)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+      }}
+    >
+      <div style={{ ...cardStyle(), width: 400 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: 'var(--danger)' }}>
+          🔄 Restore Backup
+        </h3>
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.5 }}>
+          <strong>Warning:</strong> This will replace the current database with the backup. All recent changes since the backup was created will be lost. This cannot be undone.
+        </p>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button onClick={onCancel} disabled={loading} style={btnStyle('secondary', true)}>
+            Cancel
+          </button>
+          <button onClick={onConfirm} disabled={loading} style={btnStyle('danger', true)}>
+            {loading ? 'Restoring…' : 'Restore Backup'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────
 // Main
 // ────────────────────────────────────────
 
@@ -111,6 +197,8 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
   const [backupLoading, setBackupLoading] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [showQuotaModal, setShowQuotaModal] = useState(false);
+  const [showBackupConfirm, setShowBackupConfirm] = useState(false);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
 
   const load = useCallback(async () => {
     const res = await window.sccfs.storage.stats(sessionId);
@@ -123,10 +211,11 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
     load();
   }, [load]);
 
-  const handleBackup = async () => {
+  const executeBackup = async () => {
     setBackupLoading(true);
     const res = await window.sccfs.storage.backup(sessionId);
     setBackupLoading(false);
+    setShowBackupConfirm(false);
     if (res.ok) {
       addToast('success', `Backup saved to ${res.data.path}`);
     } else if (res.error?.code !== 'CANCELLED') {
@@ -134,16 +223,24 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
     }
   };
 
-  const handleRestore = async () => {
-    if (!confirm('Restore from backup? The current database will be replaced. This cannot be undone.')) return;
+  const executeRestore = async () => {
     setRestoreLoading(true);
     const res = await window.sccfs.storage.restore(sessionId);
     setRestoreLoading(false);
+    setShowRestoreConfirm(false);
     if (res.ok) {
       addToast('success', 'Restore completed. Refreshing application state…');
     } else if (res.error?.code !== 'CANCELLED') {
       addToast('error', res.error?.message ?? 'Restore failed');
     }
+  };
+
+  const handleBackup = () => {
+    setShowBackupConfirm(true);
+  };
+
+  const handleRestore = () => {
+    setShowRestoreConfirm(true);
   };
 
   if (loading) {
@@ -421,6 +518,22 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
           addToast={addToast}
           onClose={() => setShowQuotaModal(false)}
           onDone={load}
+        />
+      )}
+
+      {showBackupConfirm && (
+        <BackupConfirmModal
+          onConfirm={executeBackup}
+          onCancel={() => setShowBackupConfirm(false)}
+          loading={backupLoading}
+        />
+      )}
+
+      {showRestoreConfirm && (
+        <RestoreConfirmModal
+          onConfirm={executeRestore}
+          onCancel={() => setShowRestoreConfirm(false)}
+          loading={restoreLoading}
         />
       )}
     </div>

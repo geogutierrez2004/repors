@@ -9,7 +9,6 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts';
 import {
-  type SessionInfo,
   type SafeUser,
   type SecurityIntegrityStats,
   type SecurityThresholdSettings,
@@ -49,19 +48,12 @@ interface Props {
 }
 
 export function SecurityDashboard({ sessionId, user, addToast }: Props): React.JSX.Element {
-  const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [integrity, setIntegrity] = useState<SecurityIntegrityStats | null>(null);
   const [thresholds, setThresholds] = useState<SecurityThresholdSettings>(DEFAULT_SECURITY_THRESHOLD_SETTINGS);
   const [settingsDraft, setSettingsDraft] = useState<SecurityThresholdSettings>(DEFAULT_SECURITY_THRESHOLD_SETTINGS);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [loading, setLoading] = useState(true);
-
-  const loadSessions = useCallback(async () => {
-    const res = await window.sccfs.sessions.list(sessionId);
-    if (res.ok) setSessions(res.data);
-    else addToast('error', res.error?.message ?? 'Failed to load sessions');
-  }, [sessionId, addToast]);
 
   const loadIntegrity = useCallback(async () => {
     const res = await window.sccfs.dashboard.securityIntegrityStats(sessionId);
@@ -83,17 +75,17 @@ export function SecurityDashboard({ sessionId, user, addToast }: Props): React.J
 
   const load = useCallback(async () => {
     setLoading(true);
-    await Promise.all([loadSessions(), loadIntegrity(), loadThresholds()]);
+    await Promise.all([loadIntegrity(), loadThresholds()]);
     setLoading(false);
-  }, [loadSessions, loadIntegrity, loadThresholds]);
+  }, [loadIntegrity, loadThresholds]);
 
   useEffect(() => {
     load();
     const id = setInterval(() => {
-      void Promise.all([loadSessions(), loadIntegrity()]);
+      void Promise.all([loadIntegrity()]);
     }, 20_000);
     return () => clearInterval(id);
-  }, [load, loadSessions, loadIntegrity]);
+  }, [load, loadIntegrity]);
 
   const handleSaveThresholds = async () => {
     if (settingsDraft.storage_warn_percent >= settingsDraft.storage_danger_percent) {
@@ -119,17 +111,6 @@ export function SecurityDashboard({ sessionId, user, addToast }: Props): React.J
 
   const handleResetThresholds = () => {
     setSettingsDraft(DEFAULT_SECURITY_THRESHOLD_SETTINGS);
-  };
-
-  const handleTerminate = async (targetId: string, username: string) => {
-    if (!confirm(`Terminate session for "${username}"?`)) return;
-    const res = await window.sccfs.sessions.terminate(sessionId, targetId);
-    if (res.ok) {
-      addToast('success', `Session for "${username}" terminated`);
-      loadSessions();
-    } else {
-      addToast('error', res.error?.message ?? 'Failed');
-    }
   };
 
   const now = Date.now();

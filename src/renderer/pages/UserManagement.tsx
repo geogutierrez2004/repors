@@ -48,8 +48,6 @@ function UserModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const currentPasswordMatches = state.mode === 'change-password' ? currentPassword === currentPasswordConfirm && currentPassword.trim() !== '' : true;
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -64,6 +62,12 @@ function UserModal({
         if (!res.ok) { setError(res.error?.message ?? 'Failed'); return; }
         addToast('success', `Password reset for "${state.username}"`);
       } else {
+        // 2FA: Verify current password is entered twice and matches
+        if (currentPassword !== currentPasswordConfirm) {
+          setError('Current password confirmation does not match');
+          setLoading(false);
+          return;
+        }
         const res = await window.sccfs.auth.changePassword(sessionId, currentPassword, password);
         if (!res.ok) { setError(res.error?.message ?? 'Failed'); return; }
         addToast('success', 'Password changed');
@@ -160,7 +164,7 @@ function UserModal({
               style={inputStyle}
               autoFocus
             />
-            
+
             <label style={labelStyle}>Confirm Current Password</label>
             <input
               required
@@ -168,18 +172,11 @@ function UserModal({
               value={currentPasswordConfirm}
               onChange={(e) => setCurrentPasswordConfirm(e.target.value)}
               style={inputStyle}
-              placeholder="Re-enter your current password"
             />
-            
-            {currentPassword !== currentPasswordConfirm && currentPassword.trim() !== '' && (
-              <div style={{ fontSize: 12, color: 'var(--danger)', marginBottom: 12 }}>
-                Passwords do not match
-              </div>
-            )}
           </>
         )}
 
-        {state.mode !== 'create-user' && (state.mode === 'reset-password' || currentPasswordMatches) && (
+        {state.mode !== 'create-user' && (
           <>
             <label style={labelStyle}>
               {state.mode === 'change-password' ? 'New Password' : 'Password'}
@@ -205,7 +202,7 @@ function UserModal({
           <button type="button" onClick={onClose} style={btnStyle('secondary', true)}>
             Cancel
           </button>
-          <button type="submit" disabled={loading || (state.mode === 'change-password' && !currentPasswordMatches)} style={btnStyle('primary', true)}>
+          <button type="submit" disabled={loading} style={btnStyle('primary', true)}>
             {loading ? 'Saving…' : 'Save'}
           </button>
         </div>
@@ -266,7 +263,7 @@ export function UserManagement({ sessionId, user, addToast }: Props): React.JSX.
   };
 
   const handleDelete = async (u: SafeUser) => {
-    if (!confirm(`You cannot delete files or folders, ask administrators to delete them or something.`)) return;
+    if (!confirm(`Delete user "${u.username}"? This cannot be undone.`)) return;
     const res = await window.sccfs.users.delete(sessionId, u.id);
     if (res.ok) {
       addToast('success', `User "${u.username}" deleted`);
@@ -415,63 +412,69 @@ export function UserManagement({ sessionId, user, addToast }: Props): React.JSX.
         </div>
       </div>
 
-      {/* Current User Card */}
-      <div style={{ ...cardStyle(), marginBottom: 24, padding: '20px', border: '2px solid var(--accent)', borderRadius: 8 }}>
-        <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 16, color: 'var(--text-primary)' }}>
-          👤 Your Account
-        </h3>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
-          <div>
-            <p style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 4 }}>Username</p>
-            <p style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{user.username}</p>
-          </div>
-          <div>
-            <p style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 4 }}>Role</p>
-            <span
-              style={{
-                fontSize: 12,
-                padding: '3px 8px',
-                borderRadius: 10,
-                background: user.role === 'admin' ? '#eef2ff' : '#f0fdf4',
-                color: user.role === 'admin' ? '#4f46e5' : '#16a34a',
-                fontWeight: 600,
-                textTransform: 'capitalize',
-                display: 'inline-block',
-              }}
-            >
-              {user.role}
-            </span>
-          </div>
-          <div>
-            <p style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 4 }}>Status</p>
-            <span
-              style={{
-                fontSize: 12,
-                padding: '3px 8px',
-                borderRadius: 10,
-                background: user.is_active ? '#f0fdf4' : '#fef2f2',
-                color: user.is_active ? '#16a34a' : '#dc2626',
-                fontWeight: 600,
-                display: 'inline-block',
-              }}
-            >
-              {user.is_active ? '● Active' : '○ Inactive'}
-            </span>
-          </div>
-          <div>
-            <p style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 4 }}>Created</p>
-            <p style={{ fontSize: 14, color: 'var(--text-primary)' }}>{new Date(user.created_at).toLocaleDateString()}</p>
+      {/* Current user card */}
+      {!loading && (
+        <div style={{ ...cardStyle(), marginBottom: 20 }}>
+          <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16, color: 'var(--text-primary)' }}>
+            👤 My Account
+          </h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
+            <div>
+              <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                Username
+              </p>
+              <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                {user.username}
+              </p>
+            </div>
+            <div>
+              <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                Role
+              </p>
+              <span
+                style={{
+                  fontSize: 11,
+                  padding: '4px 10px',
+                  borderRadius: 10,
+                  background: user.role === 'admin' ? '#eef2ff' : '#f0fdf4',
+                  color: user.role === 'admin' ? '#4f46e5' : '#16a34a',
+                  fontWeight: 600,
+                  textTransform: 'capitalize',
+                  display: 'inline-block',
+                }}
+              >
+                {user.role}
+              </span>
+            </div>
+            <div>
+              <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                Status
+              </p>
+              <span
+                style={{
+                  fontSize: 11,
+                  padding: '4px 10px',
+                  borderRadius: 10,
+                  background: user.is_active ? '#f0fdf4' : '#fef2f2',
+                  color: user.is_active ? '#16a34a' : '#dc2626',
+                  fontWeight: 600,
+                  display: 'inline-block',
+                }}
+              >
+                {user.is_active ? '● Active' : '○ Inactive'}
+              </span>
+            </div>
           </div>
         </div>
-      </div>
-
-      {/* Table Header */}
-      <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, color: 'var(--text-primary)' }}>
-        All Users
-      </h3>
+      )}
 
       {/* Table */}
       <div style={{ ...cardStyle(), padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+          <h2 style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+            👥 Other Accounts
+          </h2>
+        </div>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: 'var(--bg-hover)', borderBottom: '1px solid var(--border)' }}>
@@ -489,28 +492,20 @@ export function UserManagement({ sessionId, user, addToast }: Props): React.JSX.
                   Loading…
                 </td>
               </tr>
+            ) : users.filter((u) => u.id !== user.id).length === 0 ? (
+              <tr>
+                <td colSpan={5} style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}>
+                  No other accounts
+                </td>
+              </tr>
             ) : (
               users.filter((u) => u.id !== user.id).map((u) => {
-                const isSelf = u.id === user.id;
+                const isSelf = false;
                 return (
                   <tr key={u.id} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={tdStyle()}>
                       <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
                         {u.username}
-                        {isSelf && (
-                          <span
-                            style={{
-                              fontSize: 10,
-                              background: 'var(--accent)',
-                              color: '#fff',
-                              borderRadius: 10,
-                              padding: '1px 6px',
-                              marginLeft: 6,
-                            }}
-                          >
-                            You
-                          </span>
-                        )}
                       </div>
                     </td>
                     <td style={tdStyle()}>

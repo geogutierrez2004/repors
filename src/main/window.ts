@@ -1,10 +1,8 @@
 /**
  * BrowserWindow factory with strict security configuration (spec §2.4).
  */
-import { BrowserWindow, ipcMain } from 'electron';
+import { BrowserWindow } from 'electron';
 import path from 'node:path';
-
-let droppedFilesStore: string[] = [];
 
 export function createMainWindow(): BrowserWindow {
   const isDev = process.env['NODE_ENV'] === 'development';
@@ -30,18 +28,6 @@ export function createMainWindow(): BrowserWindow {
   // Hide native menu
   win.removeMenu();
 
-  // Register IPC handlers for dropped files
-  ipcMain.handle('store-dropped-files', (_event, filePaths: string[]) => {
-    droppedFilesStore = filePaths;
-    return { ok: true };
-  });
-
-  ipcMain.handle('get-dropped-files', () => {
-    const files = droppedFilesStore;
-    droppedFilesStore = []; // Clear after retrieval
-    return files;
-  });
-
   // In development, load from dev server; in production, load bundled HTML
   if (isDev) {
     void win.loadURL('http://localhost:3000');
@@ -60,8 +46,8 @@ export function createMainWindow(): BrowserWindow {
 
   // Show window after content is loaded
   win.once('ready-to-show', () => {
-    win.show();
     win.maximize();
+    win.show();
   });
 
   return win;

@@ -12,7 +12,6 @@ import type { FileRecord, ShelfRecord, PaginatedResult, SourceHandlingMode } fro
 import type { AddToast } from '../App';
 import type { SafeUser } from '../../shared/types';
 import { cardStyle, btnStyle } from '../App';
-import { SYSTEM_SHELVES } from '../../shared/constants';
 import {
   type PreviewKind,
   inferMimeFromFileName,
@@ -96,7 +95,7 @@ function MoveModal({
             marginBottom: 16,
           }}
         >
-          {shelves.map((s) => (
+          {shelves.filter((s) => s.name !== 'Archive' && s.name !== 'Inbox').map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
             </option>
@@ -179,7 +178,8 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const [sourceHandlingModalResolve, setSourceHandlingModalResolve] = useState<((mode: SourceHandlingMode) => void) | null>(null);
   const [showUploadPasswordModal, setShowUploadPasswordModal] = useState(false);
   const [pendingUploadMode, setPendingUploadMode] = useState<SourceHandlingMode>('keep_original');
-  const [pendingUploadPaths, setPendingUploadPaths] = useState<string[] | null>(null);
+  const [pendingUploadSourcePaths, setPendingUploadSourcePaths] = useState<string[]>([]);
+  const [uploadPasswordError, setUploadPasswordError] = useState<string | null>(null);
   const [decryptPrompt, setDecryptPrompt] = useState<{ fileId: string; name: string; mode: 'download' | 'view' } | null>(null);
   const [decryptionPassword, setDecryptionPassword] = useState('');
   const [decryptionError, setDecryptionError] = useState<string | null>(null);
@@ -201,8 +201,6 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     height: PREVIEW_MODAL_DEFAULT_HEIGHT,
   });
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
-  const [batchUploadFiles, setBatchUploadFiles] = useState<File[]>([]);
-  const [showBatchUploadModal, setShowBatchUploadModal] = useState(false);
   const [renameModal, setRenameModal] = useState<{ fileId: string; currentName: string } | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [renameError, setRenameError] = useState<string | null>(null);
@@ -480,6 +478,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     if (!selectedShelf) return;
     setUploadLoading(true);
     const effectiveMode = pendingUploadMode;
+    const sourcePaths = pendingUploadSourcePaths.length > 0 ? pendingUploadSourcePaths : undefined;
     const res = await window.sccfs.files.upload(
       sessionId,
       selectedShelf,
@@ -487,9 +486,10 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       encryptionPassword,
       effectiveMode,
       false,
-      undefined,
+      sourcePaths,
     );
     setUploadLoading(false);
+    setPendingUploadSourcePaths([]);
     if (res.ok) {
       const successes = res.data.files.filter((f) => f.success);
       const failures = res.data.files.filter((f) => !f.success);
@@ -519,91 +519,24 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     }
   };
 
-  const performUploadWithPaths = async (
-    encrypt: boolean,
-    encryptionPassword: string | undefined,
-    filePaths: string[],
-  ) => {
-    if (!selectedShelf) return;
-    setUploadLoading(true);
-    const effectiveMode = pendingUploadMode;
-    const res = await window.sccfs.files.upload(
-      sessionId,
-      selectedShelf,
-      encrypt,
-      encryptionPassword,
-      effectiveMode,
-      false,
-      filePaths,
-    );
-    setUploadLoading(false);
-    if (res.ok) {
-      const successes = res.data.files.filter((f) => f.success);
-      const failures = res.data.files.filter((f) => !f.success);
-      const removed = successes.filter((f) => f.removed_original).length;
-      if (successes.length > 0) {
-        addToast(
-          'success',
-          encrypt
-            ? `Encrypted upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`
-            : `Standard upload complete (${successes.length} file${successes.length > 1 ? 's' : ''})${removed ? `, removed ${removed} original(s)` : ''}`,
-        );
-      } else if (res.data.files.length > 0) {
-        addToast('warning', 'Upload completed, but no files were successfully uploaded.');
-      }
-      if (failures.length > 0) {
-        addToast(
-          'error',
-          `${failures.length} file(s) failed: ${failures[0].error?.message ?? 'Upload failed'}`,
-        );
-      }
-      loadFiles();
-      loadShelves();
-      return;
-    }
-    if (res.error?.code !== 'CANCELLED') {
-      addToast('error', res.error?.message ?? 'Upload failed');
-    }
-  };
-
-  const handleKeepOriginals = () => {
-    setPendingUploadMode('keep_original');
-    setShowSourceHandlingModal(false);
-    const resolve = sourceHandlingModalResolve;
-    setSourceHandlingModalResolve(null);
-    resolve?.('keep_original');
-  };
-
-  const handleMoveToSystem = () => {
-    setPendingUploadMode('move_to_system');
-    setShowSourceHandlingModal(false);
-    const resolve = sourceHandlingModalResolve;
-    setSourceHandlingModalResolve(null);
-    resolve?.('move_to_system');
-  };
-
-  const beginUploadFlow = async (filePaths?: string[]) => {
-    if (!selectedShelf) {
-      addToast('warning', 'Select a folder before uploading');
-      return;
-    }
-
-    setPendingUploadPaths(filePaths && filePaths.length > 0 ? filePaths : null);
-
-    if (sourceHandlingMode === 'ask_each_time') {
-      await new Promise<void>((resolve) => {
-        setSourceHandlingModalResolve(() => (mode: SourceHandlingMode) => {
-          setPendingUploadMode(mode);
-          setSourceHandlingModalResolve(null);
-          setShowSourceHandlingModal(false);
-          resolve();
-        });
-        setShowSourceHandlingModal(true);
-      });
-    } else {
+  const resolveSourceHandlingChoice = async (): Promise<void> => {
+    if (sourceHandlingMode !== 'ask_each_time') {
       setPendingUploadMode(sourceHandlingMode);
+      return;
     }
+    await new Promise<void>((resolve) => {
+      setSourceHandlingModalResolve(() => (mode: SourceHandlingMode) => {
+        setPendingUploadMode(mode);
+        setShowSourceHandlingModal(false);
+        resolve();
+      });
+      setShowSourceHandlingModal(true);
+    });
+  };
 
+  const beginUploadPasswordStep = async (sourcePaths: string[]) => {
+    setPendingUploadSourcePaths(sourcePaths);
+    await resolveSourceHandlingChoice();
     if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
     if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
     setUploadPasswordError(null);
@@ -611,7 +544,26 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   };
 
   const handleUpload = async () => {
-    await beginUploadFlow();
+    if (!selectedShelf) {
+      addToast('warning', 'Select a folder before uploading');
+      return;
+    }
+
+    const pickRes = await window.sccfs.files.pickUploadSources(sessionId);
+    if (!pickRes.ok) {
+      if (pickRes.error?.code !== 'CANCELLED') {
+        addToast('error', pickRes.error?.message ?? 'Failed to select files');
+      }
+      return;
+    }
+
+    const sourcePaths = pickRes.data.filePaths;
+    if (sourcePaths.length === 0) {
+      addToast('warning', 'No files selected');
+      return;
+    }
+
+    await beginUploadPasswordStep(sourcePaths);
   };
 
   const handleDownload = async (fileId: string, name: string, encrypted: boolean) => {
@@ -648,13 +600,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       return;
     }
     setShowUploadPasswordModal(false);
-    const filePaths = pendingUploadPaths;
-    setPendingUploadPaths(null);
-    if (filePaths && filePaths.length > 0) {
-      await performUploadWithPaths(true, password, filePaths);
-    } else {
-      await performUpload(true, password);
-    }
+    await performUpload(true, password);
     if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
     if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
     setUploadPasswordError(null);
@@ -910,56 +856,24 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     e.stopPropagation();
     setIsDraggingFiles(false);
 
-    // Get file paths from the preload's dropped files storage (populated by drop event listener)
-    const filePaths = (window as any).getDroppedFiles?.() ?? [];
-    if (filePaths.length === 0) {
-      addToast('warning', 'No files were detected from the drop action.');
+    if (!selectedShelf) {
+      addToast('warning', 'Select a folder before uploading');
       return;
     }
-    void beginUploadFlow(filePaths);
-  };
 
-  const handleUploadFiles = async (filesToUpload: File[], skipPasswordModal: boolean = false) => {
-    // This would be handled by the existing upload dialog flow
-    // For now, we'll show a message that batch upload is ready
-    setShowBatchUploadModal(false);
-    setBatchUploadFiles([]);
-    
-    if (skipPasswordModal) {
-      // For drag-drop: upload directly without encryption
-      if (sourceHandlingMode === 'ask_each_time') {
-        await new Promise<void>((resolve) => {
-          setSourceHandlingModalResolve(() => (mode: SourceHandlingMode) => {
-            setPendingUploadMode(mode);
-            setShowSourceHandlingModal(false);
-            resolve();
-          });
-          setShowSourceHandlingModal(true);
-        });
-      } else {
-        setPendingUploadMode(sourceHandlingMode);
-      }
-      await performUpload(false, undefined);
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    if (droppedFiles.length === 0) return;
+
+    const sourcePaths = droppedFiles
+      .map((file) => window.sccfs.files.getPathForFile(file))
+      .filter((value): value is string => typeof value === 'string' && value.length > 0);
+
+    if (sourcePaths.length === 0) {
+      addToast('error', 'Could not read dropped file paths. Please use the Upload button.');
       return;
     }
-    
-    if (sourceHandlingMode === 'ask_each_time') {
-      await new Promise<void>((resolve) => {
-        setSourceHandlingModalResolve(() => (mode: SourceHandlingMode) => {
-          setPendingUploadMode(mode);
-          setShowSourceHandlingModal(false);
-          resolve();
-        });
-        setShowSourceHandlingModal(true);
-      });
-    } else {
-      setPendingUploadMode(sourceHandlingMode);
-    }
-    if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
-    if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
-    setUploadPasswordError(null);
-    setShowUploadPasswordModal(true);
-    addToast('info', `Ready to upload ${filesToUpload.length} file(s)`);
+
+    void beginUploadPasswordStep(sourcePaths);
   };
 
   const handleRename = async () => {
@@ -1078,7 +992,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
           </span>
         </button>
 
-        {shelves.filter((s) => !SYSTEM_SHELVES.includes(s.name as any)).map((s) => (
+        {shelves.filter((s) => s.name !== 'Archive' && s.name !== 'Inbox').map((s) => (
           <div
             key={s.id}
             style={{
@@ -1243,15 +1157,15 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                 padding: '7px 10px',
                 borderRadius: 6,
                 border: '1px solid var(--border)',
-                background: 'var(--bg-surface)',
-                color: 'var(--text-primary)',
+                background: sourceHandlingMode === 'move_to_system' ? '#fffbeb' : 'var(--bg-surface)',
+                color: sourceHandlingMode === 'move_to_system' ? '#b45309' : 'var(--text-primary)',
                 fontSize: 12,
               }}
               title="Source file handling after upload"
             >
+              <option value="ask_each_time">Ask each time</option>
               <option value="keep_original">Keep originals</option>
               <option value="move_to_system">Move originals to system</option>
-              <option value="ask_each_time">Ask each time</option>
             </select>
             {selectedIds.length > 0 && (
               <>
@@ -1287,13 +1201,13 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             </button>
           </div>
         </div>
-        {sourceHandlingMode !== 'keep_original' && (
+        {sourceHandlingMode === 'move_to_system' && (
           <div
             style={{
               padding: '8px 20px',
               borderBottom: '1px solid var(--border)',
-              background: 'rgba(107, 114, 128, 0.08)',
-              color: '#6b7280',
+              background: '#fef3c7',
+              color: '#92400e',
               fontSize: 12,
             }}
           >
@@ -1310,7 +1224,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
               fontSize: 12,
             }}
           >
-            🔒 You cannot delete folders and files, ask an administrator
+            🔒 You have view-only access. Upload, move, rename, and delete operations are restricted to administrators.
           </div>
         )}
 
@@ -1581,13 +1495,19 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
           </p>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button
-              onClick={handleKeepOriginals}
+              onClick={() => {
+                sourceHandlingModalResolve?.('keep_original');
+                setSourceHandlingModalResolve(null);
+              }}
               style={btnStyle('secondary', true)}
             >
               Keep Originals
             </button>
             <button
-              onClick={handleMoveToSystem}
+              onClick={() => {
+                sourceHandlingModalResolve?.('move_to_system');
+                setSourceHandlingModalResolve(null);
+              }}
               style={btnStyle('primary', true)}
             >
               Move to System
@@ -1636,7 +1556,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             <button
               onClick={() => {
                 setShowUploadPasswordModal(false);
-                setPendingUploadPaths(null);
+                setPendingUploadSourcePaths([]);
                 if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
                 if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
                 setUploadPasswordError(null);
@@ -1820,58 +1740,6 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
         </OverlayModal>
       )}
 
-      {/* Batch Upload Summary Modal */}
-      {showBatchUploadModal && (
-        <OverlayModal>
-          <h3 style={{ marginTop: 0, marginBottom: 12 }}>Upload {batchUploadFiles.length} Files</h3>
-          <p style={{ marginTop: 0, marginBottom: 12, color: 'var(--text-secondary)', fontSize: 13 }}>
-            Files to be uploaded to <strong>{shelves.find((s) => s.id === selectedShelf)?.name || 'selected folder'}</strong>:
-          </p>
-          <div
-            style={{
-              maxHeight: 240,
-              overflowY: 'auto',
-              border: '1px solid var(--border)',
-              borderRadius: 6,
-              padding: 10,
-              marginBottom: 12,
-              background: 'var(--bg-hover)',
-            }}
-          >
-            {batchUploadFiles.map((f, i) => (
-              <div
-                key={i}
-                style={{
-                  fontSize: 12,
-                  padding: '6px 0',
-                  borderBottom: i < batchUploadFiles.length - 1 ? '1px solid var(--border)' : 'none',
-                  color: 'var(--text-primary)',
-                }}
-              >
-                {f.name} <span style={{ color: 'var(--text-secondary)' }}>({(f.size / 1024).toFixed(1)} KB)</span>
-              </div>
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-            <button
-              onClick={() => {
-                setShowBatchUploadModal(false);
-                setBatchUploadFiles([]);
-              }}
-              style={btnStyle('secondary', true)}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={() => handleUploadFiles(batchUploadFiles)}
-              style={btnStyle('primary', true)}
-            >
-              Upload {batchUploadFiles.length} File{batchUploadFiles.length > 1 ? 's' : ''}
-            </button>
-          </div>
-        </OverlayModal>
-      )}
-
       {/* Rename Modal */}
       {renameModal && (
         <OverlayModal>
@@ -1932,7 +1800,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             {deleteConfirmModal.type === 'file' ? '🗑 Delete Files' : '🗑 Delete Folder'}
           </h3>
           <p style={{ marginTop: 0, marginBottom: 16, color: 'var(--text-secondary)', fontSize: 13 }}>
-            You cannot delete files or folders, ask administrators to delete them or something.
+            You cannot delete files or folders, ask administrators to delete them or something
           </p>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button

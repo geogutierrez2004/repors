@@ -45,11 +45,13 @@ function formatActionName(action: string): string {
 
 function fmtDateTime(ts: string): string {
   const date = new Date(ts);
+  const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
-  const year = date.getFullYear();
-  const time = date.toLocaleTimeString(undefined, { timeStyle: 'medium' });
-  return `${month}-${day}-${year} ${time}`;
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
 // ────────────────────────────────────────
@@ -136,12 +138,12 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
     load();
   }, [load]);
 
-  const totalPages = Math.max(1, Math.ceil(result.total / PAGE_SIZE));
-
-  const applyFilters = () => {
+  // Auto-apply filters when they change
+  useEffect(() => {
     setPage(1);
-    load();
-  };
+  }, [filterAction, filterDateFrom, filterDateTo]);
+
+  const totalPages = Math.max(1, Math.ceil(result.total / PAGE_SIZE));
 
   const clearFilters = () => {
     setFilterAction('');
@@ -207,7 +209,7 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
           <label style={labelStyle}>Action</label>
           <select
             value={filterAction}
-            onChange={(e) => { setFilterAction(e.target.value); setPage(1); }}
+            onChange={(e) => setFilterAction(e.target.value)}
             style={selectStyle}
           >
             <option value="">All Actions</option>
@@ -221,7 +223,7 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
           <input
             type="date"
             value={filterDateFrom}
-            onChange={(e) => { setFilterDateFrom(e.target.value); setPage(1); }}
+            onChange={(e) => setFilterDateFrom(e.target.value)}
             style={inputStyle}
           />
         </div>
@@ -230,7 +232,7 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
           <input
             type="date"
             value={filterDateTo}
-            onChange={(e) => { setFilterDateTo(e.target.value); setPage(1); }}
+            onChange={(e) => setFilterDateTo(e.target.value)}
             style={inputStyle}
           />
         </div>
@@ -244,8 +246,11 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
         </div>
       </div>
 
-      {/* Table */}
-      <div style={{ ...cardStyle(), padding: 0, overflow: 'hidden' }}>
+      {/* Two-column: table + heatmap */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 20 }}>
+        {/* Table */}
+        <div>
+          <div style={{ ...cardStyle(), padding: 0, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--bg-hover)', borderBottom: '1px solid var(--border)' }}>
@@ -333,6 +338,8 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
               </button>
             </div>
           )}
+        </div>
+      </div>
     </div>
   );
 }
