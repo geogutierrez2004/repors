@@ -1262,9 +1262,30 @@ export class DashboardService {
   setQuota(sessionId: string, quotaBytes: number): void {
     requireAuth(sessionId);
 
-    this.db
-      .prepare("INSERT OR REPLACE INTO storage_config (key, value) VALUES ('quota_bytes', ?)")
-      .run(String(quotaBytes));
+    try {
+      // Get actual free space - quota can be set to any value UP TO 90% of available
+      const stat = fs.statfsSync(getFilesDir(), { bigint: true });
+      const availableBytes = stat.bavail * stat.bsize;
+      const maxQuotaAllowed = (availableBytes * BigInt(90)) / 100n;
+
+      if (quotaBytes > Number(maxQuotaAllowed)) {
+        throw new AuthError(
+          'QUOTA_EXCEEDS_AVAILABLE',
+          `Quota cannot exceed ${Math.round(Number(maxQuotaAllowed) / 1e9)} GB (90% of available space)`
+        );
+      }
+
+      if (quotaBytes <= 0) {
+        throw new AuthError('INVALID_QUOTA', 'Quota must be greater than 0');
+      }
+
+      this.db
+        .prepare("INSERT OR REPLACE INTO storage_config (key, value) VALUES ('quota_bytes', ?)")
+        .run(String(quotaBytes));
+    } catch (e) {
+      if (e instanceof AuthError) throw e;
+      throw new AuthError('QUOTA_SET_FAILED', 'Failed to set quota');
+    }
   }
 
   // ── System drive status ──────────────

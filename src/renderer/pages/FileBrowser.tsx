@@ -1800,7 +1800,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             {deleteConfirmModal.type === 'file' ? '🗑 Delete Files' : '🗑 Delete Folder'}
           </h3>
           <p style={{ marginTop: 0, marginBottom: 16, color: 'var(--text-secondary)', fontSize: 13 }}>
-            You cannot delete files or folders, ask administrators to delete them or something
+            ⚠️ This will permanently delete the selected {deleteConfirmModal.type === 'file' ? 'file(s)' : 'folder'}. This action cannot be undone.
           </p>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button

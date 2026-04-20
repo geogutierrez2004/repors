@@ -46,6 +46,11 @@ flowchart TB
   Thresholds --> ThrProc["<b>Process:</b><br/>Admin permission check<br/>Validate bounds<br/>Persist to app_config<br/>Apply severity mapping<br/>Log change"]
   Thresholds --> ThrOut["<b>Output:</b><br/>Updated security card<br/>Threshold config saved<br/>Activity logged"]
   
+  ROOT --> ActivityLog["📋 P10: Activity Log"]
+  ActivityLog --> ActIn["<b>Input:</b><br/>Date range filter<br/>Action filters<br/>Export trigger"]
+  ActivityLog --> ActProc["<b>Process:</b><br/>Query activity_log table<br/>Apply date filters<br/>Apply action filters<br/>Paginate results<br/>Format output<br/>Export to CSV<br/>All users can view"]
+  ActivityLog --> ActOut["<b>Output:</b><br/>Filtered activities<br/>CSV export file<br/>Pagination info"]
+  
   classDef input fill:#e3f2fd,stroke:#1565c0,stroke-width:1.5px,color:#000
   classDef process fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
   classDef output fill:#e8f5e9,stroke:#2e7d32,stroke-width:1.5px,color:#000
@@ -53,7 +58,7 @@ flowchart TB
   classDef step fill:#f3e5f5,stroke:#4a148c,stroke-width:1.5px,color:#000
   
   class ROOT title
-  class AuthIn,UpIn,OrgIn,DownIn,ViewIn,FmIn,BackIn,RestIn,ThrIn input
-  class AuthProc,UpProc,OrgProc,DownProc,ViewProc,FmProc,BackProc,RestProc,ThrProc process
-  class AuthOut,UpOut,OrgOut,DownOut,ViewOut,FmOut,BackOut,RestOut,ThrOut output
-  class Auth,Upload,Org,Download,View,FileMgmt,Backup,Restore,Thresholds step
+  class AuthIn,UpIn,OrgIn,DownIn,ViewIn,FmIn,BackIn,RestIn,ThrIn,ActIn input
+  class AuthProc,UpProc,OrgProc,DownProc,ViewProc,FmProc,BackProc,RestProc,ThrProc,ActProc process
+  class AuthOut,UpOut,OrgOut,DownOut,ViewOut,FmOut,BackOut,RestOut,ThrOut,ActOut output
+  class Auth,Upload,Org,Download,View,FileMgmt,Backup,Restore,Thresholds,ActivityLog step
