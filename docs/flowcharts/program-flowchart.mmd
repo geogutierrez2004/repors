@@ -1,207 +1,154 @@
 flowchart TD
-  Start([🚀 App Start]) --> CheckSession{Session Valid?}
-  
-  CheckSession -->|No| Login["📝 Login Page"]
-  Login --> InputCreds["Enter Username/Password"]
-  InputCreds --> ValidateAuth{PBKDF2<br/>Verify}
-  ValidateAuth -->|Failed| LoginError["❌ Error:<br/>Invalid Credentials"]
-  LoginError --> Login
-  ValidateAuth -->|Success| CreateSession["✅ Create Session<br/>Store Token"]
-  CreateSession --> Dashboard["🏠 Dashboard"]
-  
-  CheckSession -->|Yes| Dashboard
-  
-  Dashboard --> NavTabs{Which Tab?}
-  
-  NavTabs -->|FILES| FileBrowser["📁 File Browser"]
-  FileBrowser --> ShowShelves["Display Shelves<br/>(Exclude Archive/Inbox)"]
-  ShowShelves --> FileAction{Select Action?}
-  
-  FileAction -->|View Files| DisplayFiles["📋 Show Files in Shelf"]
-  DisplayFiles --> SelectFile{Select File?}
-  SelectFile -->|Cancel| FileBrowser
-  SelectFile -->|Download| DownloadFlow["📥 Download"]
-  SelectFile -->|Preview| PreviewFlow["👁️ Preview"]
-  SelectFile -->|Rename| RenameFlow["✏️ Rename"]
-  SelectFile -->|Move| MoveFlow["🔀 Move"]
-  SelectFile -->|Delete| DeleteFlow["🗑️ Delete"]
-  
-  FileAction -->|Upload| CheckRole{Admin or<br/>Staff?}
-  CheckRole -->|No Session| Dashboard
-  CheckRole -->|Admin| UploadAdmin["✅ Upload Allowed"]
-  CheckRole -->|Staff| UploadStaff["✅ Upload Allowed"]
-  UploadAdmin --> SelectUploadMethod
-  UploadStaff --> SelectUploadMethod
-  SelectUploadMethod{Upload Method?} -->|File Dialog| FileDialog["📂 Open File Dialog"]
-  SelectUploadMethod -->|Drag-Drop| DragDrop["🎯 Show Drop Zone"]
-  FileDialog --> SelectFiles["Select File(s)"]
-  DragDrop --> SelectFiles
-  SelectFiles --> CheckMultiple{Multiple?}
-  CheckMultiple -->|Yes| BatchModal["📋 Show Batch Summary<br/>Confirm All Files"]
-  CheckMultiple -->|No| CheckQuota
-  BatchModal --> ConfirmBatch{Confirm?}
-  ConfirmBatch -->|Cancel| FileBrowser
-  ConfirmBatch -->|OK| CheckQuota{Quota<br/>Available?}
-  CheckQuota -->|Exceeded| QuotaError["❌ Storage Full"]
-  QuotaError --> FileBrowser
-  CheckQuota -->|OK| SanitizeFilename["Sanitize Filename"]
-  SanitizeFilename --> EncryptChoice{Encrypt?}
-  EncryptChoice -->|No| StoreFile["Store to D3<br/>Plain"]
-  EncryptChoice -->|Yes| GetPassword["🔐 Enter Password"]
-  GetPassword --> ValidatePassPolicy{Password<br/>Policy Met?}
-  ValidatePassPolicy -->|Failed| PassError["❌ Password Too Weak"]
-  PassError --> GetPassword
-  ValidatePassPolicy -->|OK| GenSalt["Generate Salt/IV"]
-  GenSalt --> DeriveUploadKey["PBKDF2 Derive Key"]
-  DeriveUploadKey --> EncryptFile["Encrypt AES-256-GCM"]
-  EncryptFile --> StoreFile
-  StoreFile --> LogActivity["Log Upload Activity"]
-  LogActivity --> UploadComplete["✅ Upload Complete"]
-  UploadComplete --> FileBrowser
-  
-  DownloadFlow --> SessionGuard1{Session Valid?}
-  SessionGuard1 -->|No| SessionDenied["🚫 Session Invalid"]
-  SessionDenied --> Login
-  SessionGuard1 -->|Yes| GetFile["Fetch from D3"]
-  GetFile --> IsEncrypted{Encrypted?}
-  IsEncrypted -->|No| StreamFile["Stream Plain File"]
-  IsEncrypted -->|Yes| PromptPass["🔐 Enter Password"]
-  PromptPass --> DeriveKey["PBKDF2 Derive Key"]
-  DeriveKey --> VerifyAuth["Verify Auth Tag"]
-  VerifyAuth --> AuthOK{Auth Tag Valid?}
-  AuthOK -->|Failed| DecryptError["❌ Decryption Failed"]
-  DecryptError --> Dashboard
-  AuthOK -->|Success| DecryptAES["Decrypt AES-256-GCM"]
-  DecryptAES --> StreamFile
-  StreamFile --> LogDownload["Log Download"]
-  LogDownload --> Dashboard
-  
-  PreviewFlow --> SessionGuard2{Session Valid?}
-  SessionGuard2 -->|No| SessionDenied
-  SessionGuard2 -->|Yes| FetchEncrypted["Fetch File"]
-  FetchEncrypted --> PreviewIsEncrypted{Encrypted?}
-  PreviewIsEncrypted -->|No| PreviewPlain["Retrieve Plain"]
-  PreviewIsEncrypted -->|Yes| PreviewPass["🔐 Enter Password"]
-  PreviewPass --> PreviewDerive["PBKDF2 Derive Key"]
-  PreviewDerive --> PreviewDecrypt["Decrypt AES-256-GCM"]
-  PreviewDecrypt --> CreateTempFile["Write to D8<br/>Temp Files"]
-  PreviewPlain --> CreateTempFile
-  CreateTempFile --> InferMIME["Infer MIME Type"]
-  InferMIME --> RenderType{File Type?}
-  RenderType -->|PDF| PDFViewer["📄 PDF.js Viewer"]
-  RenderType -->|Image| ImgViewer["🖼️ Image Viewer"]
-  RenderType -->|DOCX| DocConverter["Mammoth<br/>→ HTML"]
-  RenderType -->|XLSX| SheetConverter["read-excel-file<br/>→ Table"]
-  RenderType -->|Text| TextViewer["📋 Text"]
-  RenderType -->|Other| Fallback["⚠️ Download Link"]
-  PDFViewer --> ShowPreview["🔒 Show Preview<br/>CSP-safe"]
-  ImgViewer --> ShowPreview
-  DocConverter --> ShowPreview
-  SheetConverter --> ShowPreview
-  TextViewer --> ShowPreview
-  Fallback --> ShowPreview
-  ShowPreview --> ScheduleDelete["Schedule Delete<br/>2min TTL"]
-  ScheduleDelete --> LogPreview["Log Preview"]
-  LogPreview --> Dashboard
-  
-  RenameFlow --> CheckRenameRole{Admin or<br/>Staff?}
-  CheckRenameRole -->|No| RenameNotAllowed["🚫 Not Allowed"]
-  RenameNotAllowed --> Dashboard
-  CheckRenameRole -->|Yes| PromptNewName["Enter New Name"]
-  PromptNewName --> SanitizeName["Sanitize Name"]
-  SanitizeName --> UpdateMetadata["Update D2"]
-  UpdateMetadata --> LogRename["Log Rename"]
-  LogRename --> Dashboard
-  
-  MoveFlow --> CheckMoveRole{Admin or<br/>Staff?}
-  CheckMoveRole -->|No| MoveNotAllowed["🚫 Not Allowed"]
-  MoveNotAllowed --> Dashboard
-  CheckMoveRole -->|Yes| SelectShelf["🗂️ Select Target Shelf"]
-  SelectShelf --> UpdateShelf["Update D4"]
-  UpdateShelf --> LogMove["Log Move"]
-  LogMove --> Dashboard
-  
-  DeleteFlow --> CheckDeleteRole{Admin<br/>Only?}
-  CheckDeleteRole -->|No| DeleteNotAllowed["🚫 Admin Only"]
-  DeleteNotAllowed --> Dashboard
-  CheckDeleteRole -->|Yes| ConfirmDelete["Confirm Delete?"]
-  ConfirmDelete -->|Cancel| Dashboard
-  ConfirmDelete -->|OK| DeleteFile["Remove from D3"]
-  DeleteFile --> DeleteMetadata["Remove from D2"]
-  DeleteMetadata --> LogDelete["Log Delete"]
-  LogDelete --> Dashboard
-  
-  NavTabs -->|ACTIVITY LOG| ActivityLog["📊 Activity Log"]
-  ActivityLog --> FilterActivity{Filter?}
-  FilterActivity -->|By User| FilterUser["Select User"]
-  FilterUser --> FilterDate["Select Date Range"]
-  FilterDate --> DisplayActivity["📋 Display Filtered<br/>Auto-apply filter"]
-  FilterActivity -->|By Type| FilterType["Select Operation"]
-  FilterType --> FilterDate
-  FilterActivity -->|None| DisplayActivity
-  DisplayActivity --> ExportLog["💾 Export CSV"]
-  ExportLog --> Dashboard
-  
-  NavTabs -->|SECURITY| SecurityDash["🔐 Security Dashboard"]
-  SecurityDash --> ShowIntegrity["Integrity Stats<br/>(Read-only)"]
-  ShowIntegrity --> ShowThresholds{Admin<br/>?}
-  ShowThresholds -->|Yes| EditThresholds["⚙️ Edit Thresholds"]
-  EditThresholds --> ApplyThresholds["Save Settings"]
-  ApplyThresholds --> Dashboard
-  ShowThresholds -->|No| Dashboard
-  
-  NavTabs -->|USERS| UserMgmt["👥 User Management"]
-  UserMgmt --> ShowMyAccount["📌 My Account Card<br/>(Current User)"]
-  ShowMyAccount --> ShowOtherUsers{Admin?}
-  ShowOtherUsers -->|Yes| ListUsers["📋 List Other Users"]
-  ListUsers --> UserOps{Action?}
-  UserOps -->|Update Role| UpdateRole["Edit User Role"]
-  UpdateRole --> SaveUser["Save Changes"]
-  SaveUser --> UserMgmt
-  UserOps -->|Change Pass| ChangePass["Enter Current Pass<br/>Twice (2FA)"]
-  ChangePass --> ValidatePass{Passwords<br/>Match?}
-  ValidatePass -->|No| PassMismatch["❌ Mismatch"]
-  PassMismatch --> ChangePass
-  ValidatePass -->|Yes| UpdatePass["Update in D1"]
-  UpdatePass --> UserMgmt
-  UserOps -->|Reset Pass| ResetPass["Send Reset Link"]
-  ResetPass --> UserMgmt
-  UserOps -->|Unlock| UnlockUser["Unlock Account"]
-  UnlockUser --> UserMgmt
-  ShowOtherUsers -->|No| Dashboard
-  
-  NavTabs -->|STORAGE| Storage["💾 Storage Management"]
-  Storage --> ShowStats["📈 Show Storage Stats"]
-  ShowStats --> ShowQuota{Admin?}
-  ShowQuota -->|Yes| EditQuota["⚙️ Set Quota"]
-  EditQuota --> SaveQuota["Save Quota"]
-  SaveQuota --> BackupRestore
-  ShowQuota -->|No| BackupRestore{Action?}
-  BackupRestore -->|Backup| BackupClick["Click Backup"]
-  BackupClick --> BackupModal["Confirmation Modal<br/>Backup will be<br/>exported to disk"]
-  BackupModal --> ConfirmBackup{Confirm?}
-  ConfirmBackup -->|Cancel| Storage
-  ConfirmBackup -->|OK| ExecuteBackup["Export DB<br/>Archive Payloads<br/>Compress + Sign"]
-  ExecuteBackup --> BackupComplete["✅ Backup Complete"]
-  BackupComplete --> Storage
-  BackupRestore -->|Restore| RestoreClick["Click Restore"]
-  RestoreClick --> RestoreFile["Select Archive File"]
-  RestoreFile --> RestoreModal["Confirmation Modal<br/>⚠️ WARNING:<br/>All current data<br/>will be replaced"]
-  RestoreModal --> ConfirmRestore{Confirm?}
-  ConfirmRestore -->|Cancel| Storage
-  ConfirmRestore -->|OK| ExecuteRestore["Extract Archive<br/>Verify Signature<br/>Restore DB<br/>Hot-Swap Handlers<br/>Invalidate Sessions"]
-  ExecuteRestore --> RestoreComplete["✅ Restore Complete<br/>Redirecting to Login"]
-  RestoreComplete --> Login
-  
-  classDef start fill:#c8e6c9,stroke:#2e7d32,stroke-width:3px,color:#000
-  classDef process fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
-  classDef decision fill:#ffccbc,stroke:#d84315,stroke-width:2px,color:#000
-  classDef error fill:#ffcdd2,stroke:#c62828,stroke-width:2px,color:#000
-  classDef success fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
-  classDef security fill:#e1bee7,stroke:#6a1b9a,stroke-width:2px,color:#000
-  
-  class Start,UploadComplete,BackupComplete,RestoreComplete,Dashboard success
-  class FileBrowser,Login,PreviewFlow,DownloadFlow,RenameFlow,MoveFlow,DeleteFlow,ActivityLog,SecurityDash,UserMgmt,Storage,Backup,Restore process
-  class CheckSession,NavTabs,FileAction,CheckRole,CheckMultiple,CheckQuota,EncryptChoice,IsEncrypted,AuthOK,RenderType,CheckRenameRole,CheckMoveRole,CheckDeleteRole,FilterActivity,ShowThresholds,ShowOtherUsers,UserOps,BackupRestore,ConfirmBackup,ConfirmRestore decision
-  class SessionDenied,LoginError,PassError,DecryptError,QuotaError,RenameNotAllowed,MoveNotAllowed,DeleteNotAllowed error
-  class GetPassword,EditThresholds,EditQuota,BackupModal,RestoreModal security
+    Start["🚀 App Start"] --> LoginPage["📝 Login Page"]
+    
+    LoginPage --> Input["Enter Username/Password"]
+    Input --> Verify["PBKDF2 Verify"]
+    Verify -->|Failed| InvalidCreds["❌ Invalid Credentials Error"]
+    InvalidCreds --> LoginPage
+    Verify -->|Success| CreateSession["✅ Create Session"]
+    CreateSession --> Dashboard["🏠 Dashboard"]
+    Dashboard --> NavBar["Navigation Bar<br/>🌙 Theme Toggle / 🚪 Logout"]
+    Dashboard --> TabSelection{"Which Tab?"}
+    
+    TabSelection -->|1. OVERVIEW| Overview["📊 Overview Tab<br/>Dashboard Home"]
+    TabSelection -->|2. FILES| FilesTab["📁 Files Tab"]
+    TabSelection -->|3. ACTIVITY LOG| ActivityTab["📋 Activity Log Tab"]
+    TabSelection -->|4. STORAGE & BACKUP| StorageTab["💾 Storage & Backup Tab"]
+    TabSelection -->|5. SECURITY| SecurityTab["🔒 Security Tab"]
+    TabSelection -->|6. USERS| AdminCheck{"Admin Only?"}
+    
+    AdminCheck -->|Staff| AccessDenied["🚫 Access Denied<br/>Return to Dashboard"]
+    AccessDenied --> Dashboard
+    AdminCheck -->|Admin| UsersTab["👥 Users Tab"]
+    
+    Overview --> DashHome["View Dashboard Overview"]
+    DashHome --> Dashboard
+    
+    FilesTab --> FileOps{"File Operation?"}
+    
+    FileOps -->|Search| SearchFiles["🔍 Search Files<br/>Display Results"]
+    SearchFiles --> FilesTab
+    
+    FileOps -->|Upload| UploadStart["📤 Upload Wizard"]
+    UploadStart --> UploadMethod{"Upload Method?"}
+    UploadMethod -->|Drag & Drop| SelectFiles["Select Files<br/>Batch or Single"]
+    UploadMethod -->|Upload Button| SelectFiles
+    SelectFiles --> KeepMove["📋 Modal:<br/>Keep Original OR<br/>Move to System?"]
+    KeepMove --> Encrypt["🔐 Choose Encryption<br/>Level"]
+    Encrypt --> UploadComplete["✅ Upload Complete"]
+    UploadComplete --> FilesTab
+    
+    FileOps -->|Create Folder| CreateFolder["📁 Create Folder"]
+    CreateFolder --> FilesTab
+    
+    FileOps -->|View Structure| ViewStructure["📂 View Folder Structure"]
+    ViewStructure --> FilesTab
+    
+    FileOps -->|Select Files| SelectFilesAction["📋 Select Files<br/>Singular or All"]
+    SelectFilesAction --> FilesTab
+    
+    FileOps -->|Download| DownloadFile["📥 Download Selected File"]
+    DownloadFile --> FilesTab
+    
+    FileOps -->|Preview| PreviewFile["👁️ View File Temporarily<br/>Preview Mode"]
+    PreviewFile --> FilesTab
+    
+    FileOps -->|Move| MoveFiles["🔀 Move Files to Other Folders"]
+    MoveFiles --> FilesTab
+    
+    FileOps -->|Rename| RenameFiles["✏️ Rename Files"]
+    RenameFiles --> FilesTab
+    
+    FileOps -->|Delete| DeleteCheck{"Admin Only?"}
+    DeleteCheck -->|Staff| DeleteDenied["🚫 Delete Denied<br/>Permission Restricted"]
+    DeleteDenied --> FilesTab
+    DeleteCheck -->|Admin| DeleteConfirm["⚠️ Confirm Delete?"]
+    DeleteConfirm -->|Yes| DeleteFiles["🗑️ Delete Files"]
+    DeleteFiles --> FilesTab
+    DeleteConfirm -->|No| FilesTab
+    
+    ActivityTab --> FilterDate["📅 Filter by Exact Dates"]
+    FilterDate --> ShowActions["📋 Show Actions During<br/>Date Range"]
+    ShowActions --> ExportChoice{"Export to CSV?"}
+    ExportChoice -->|Yes| ExportCSV["💾 Export to CSV"]
+    ExportCSV --> ActivityTab
+    ExportChoice -->|No| ViewLog["📊 View Activity Log"]
+    ViewLog --> ActivityTab
+    
+    StorageTab --> StorageOps{"Storage Action?"}
+    
+    StorageOps -->|View Quota| ViewQuota["📈 View Storage Quota<br/>Set by Admin"]
+    ViewQuota --> ViewSizes["📊 View Current Folder Sizes"]
+    ViewSizes --> StorageTab
+    
+    StorageOps -->|View Trend| ViewTrend["📈 View Storage Trend Chart"]
+    ViewTrend --> StorageTab
+    
+    StorageOps -->|View Folders| ViewFolders["📂 View Individual Folders<br/>File Count / Size / % of Total"]
+    ViewFolders --> StorageTab
+    
+    StorageOps -->|Backup| BackupClick["💾 Backup Button"]
+    BackupClick --> BackupConfirm["📋 Confirmation Modal"]
+    BackupConfirm -->|Yes| ExecuteBackup["💾 Execute Backup<br/>Export All Data"]
+    ExecuteBackup --> BackupSuccess["✅ Backup Complete"]
+    BackupSuccess --> StorageTab
+    BackupConfirm -->|No| StorageTab
+    
+    StorageOps -->|Restore| RestoreClick["🔄 Restore Button"]
+    RestoreClick --> RestoreConfirm["⚠️ Confirmation Modal<br/>WARNING: All current data<br/>will be replaced"]
+    RestoreConfirm -->|Yes| SelectArchive["📂 Select Archive File"]
+    SelectArchive --> ExecuteRestore["🔄 Execute Restore<br/>Verify & Extract"]
+    ExecuteRestore --> RestoreSuccess["✅ Restore Complete<br/>Redirecting to Login"]
+    RestoreSuccess --> LoginPage
+    RestoreConfirm -->|No| StorageTab
+    
+    SecurityTab --> ViewStats["📊 View Security Stats:<br/>• Failed Uploads 24h & 7 days<br/>• Storage Risk %<br/>• Backup Freshness<br/>• Auth Threat Events<br/>• Auth Threat Activity by Hour<br/>• Critical Security Events"]
+    ViewStats --> ModifyChoice{"Modify Thresholds?"}
+    
+    ModifyChoice -->|Yes| UpdateSettings["⚙️ Update Modifiable Thresholds:<br/>• Storage Warning %<br/>• Storage Danger %<br/>• Upload Failures Warning 24h<br/>• Upload Failures Danger 24h"]
+    UpdateSettings --> SaveThresh["💾 Save Thresholds"]
+    SaveThresh --> SecurityTab
+    
+    ModifyChoice -->|No| SecurityTab
+    
+    UsersTab --> UserOps{"Admin Operation?"}
+    
+    UserOps -->|Lock/Unlock| LockUnlock["🔒 Lock or Unlock Account"]
+    LockUnlock --> UsersTab
+    
+    UserOps -->|Change Password| ChangePwd["🔐 Change User Password"]
+    ChangePwd --> UsersTab
+    
+    UserOps -->|Delete Account| DeleteAccount["🗑️ Delete User Account"]
+    DeleteAccount --> UsersTab
+    
+    UserOps -->|Make Inactive| MakeInactive["⏸️ Make User Inactive"]
+    MakeInactive --> UsersTab
+    
+    UserOps -->|Add User| AddUser["👤 Add New User"]
+    AddUser --> UsersTab
+    
+    UserOps -->|Change Own Password| OwnPwdFlow["🔐 Change Own Password<br/>2FA Required"]
+    OwnPwdFlow --> EnterCurrent["Enter Current Password"]
+    EnterCurrent --> ConfirmCurrent["Confirm Current Password"]
+    ConfirmCurrent --> EnterNew["Enter New Password"]
+    EnterNew --> PwdSuccess["✅ Password Updated Successfully"]
+    PwdSuccess --> UsersTab
+    
+    NavBar -->|Theme| ThemeToggle["🌙 Toggle Dark/Light Mode"]
+    ThemeToggle --> Dashboard
+    
+    NavBar -->|Logout| LogoutFlow["🚪 Logout<br/>Clear Session"]
+    LogoutFlow --> LoginPage
+    
+    classDef start fill:#c8e6c9,stroke:#2e7d32,stroke-width:3px,color:#000
+    classDef process fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
+    classDef decision fill:#ffccbc,stroke:#d84315,stroke-width:2px,color:#000
+    classDef error fill:#ffcdd2,stroke:#c62828,stroke-width:2px,color:#000
+    classDef success fill:#c8e6c9,stroke:#388e3c,stroke-width:2px,color:#000
+    classDef tab fill:#e1bee7,stroke:#6a1b9a,stroke-width:2px,color:#000
+    
+    class Start,Dashboard,UploadComplete,BackupSuccess,RestoreSuccess,PwdSuccess success
+    class LoginPage,FilesTab,ActivityTab,StorageTab,SecurityTab,UsersTab tab
+    class TabSelection,UploadMethod,FileOps,ExportChoice,StorageOps,ModifyChoice,UserOps,AdminCheck,DeleteCheck process
+    class InvalidCreds,AccessDenied,DeleteDenied error
