@@ -58,6 +58,29 @@ function getFilesDir(): string {
   return dir;
 }
 
+function getStorageDriveStats(targetDir: string): { totalBytes: number; freeBytes: number; usedPercent: number } | null {
+  try {
+    const stat = fs.statfsSync(targetDir, { bigint: true });
+    const totalBytesBig = stat.blocks * stat.bsize;
+    const freeBytesBig = stat.bavail * stat.bsize;
+
+    if (totalBytesBig <= 0n) return null;
+
+    const maxSafe = BigInt(Number.MAX_SAFE_INTEGER);
+    const totalBytes = Number(totalBytesBig > maxSafe ? maxSafe : totalBytesBig);
+    const freeBytes = Number(freeBytesBig > maxSafe ? maxSafe : freeBytesBig);
+    const usedPercent = totalBytes > 0 ? ((totalBytes - freeBytes) / totalBytes) * 100 : 0;
+
+    return {
+      totalBytes,
+      freeBytes,
+      usedPercent,
+    };
+  } catch {
+    return null;
+  }
+}
+
 function getInitialQuotaBytes(): number {
   try {
     const stat = fs.statfsSync(getFilesDir(), { bigint: true });
@@ -96,6 +119,14 @@ async function computeSha256Stream(filePath: string): Promise<string> {
 
 async function copyStream(sourcePath: string, destinationPath: string): Promise<void> {
   await pipeline(fs.createReadStream(sourcePath), fs.createWriteStream(destinationPath));
+}
+
+function formatBytesForMessage(bytes: number): string {
+  if (bytes >= 1e12) return `${(bytes / 1e12).toFixed(2)} TB`;
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`;
+  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
+  if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(0)} KB`;
+  return `${bytes} B`;
 }
 
 const PBKDF2_ITERATIONS = 600_000;
@@ -575,6 +606,14 @@ export class DashboardService {
 
         if (usedRow.total + stat.size > quota) {
           throw new AuthError('QUOTA_EXCEEDED', 'Storage quota exceeded');
+        }
+
+        const driveStats = getStorageDriveStats(filesDir);
+        if (driveStats && stat.size > driveStats.freeBytes) {
+          throw new AuthError(
+            'DRIVE_CAPACITY_EXCEEDED',
+            `Not enough free space on active storage drive. Required ${formatBytesForMessage(stat.size)}, available ${formatBytesForMessage(driveStats.freeBytes)}.`,
+          );
         }
 
         const sha256 = await computeSha256Stream(filePath);
@@ -1222,6 +1261,8 @@ export class DashboardService {
       .prepare("SELECT value FROM storage_config WHERE key = 'quota_bytes'")
       .get() as { value: string } | undefined;
     const quota = quotaRow ? Number(quotaRow.value) : STORAGE_CONSTANTS.DEFAULT_QUOTA_BYTES;
+    const filesDir = getFilesDir();
+    const driveStats = getStorageDriveStats(filesDir);
 
     const totals = this.db
       .prepare('SELECT COUNT(*) as cnt, COALESCE(SUM(size_bytes), 0) as used FROM files')
@@ -1253,6 +1294,11 @@ export class DashboardService {
     return {
       used_bytes: totals.used,
       quota_bytes: quota,
+      max_quota_bytes: driveStats ? totals.used + driveStats.freeBytes : quota,
+      drive_total_bytes: driveStats?.totalBytes ?? 0,
+      drive_free_bytes: driveStats?.freeBytes ?? 0,
+      drive_used_percent: driveStats?.usedPercent ?? 0,
+      active_storage_path: filesDir,
       file_count: totals.cnt,
       by_shelf: byShelf,
       trend,
@@ -1261,6 +1307,21 @@ export class DashboardService {
 
   setQuota(sessionId: string, quotaBytes: number): void {
     requireAuth(sessionId);
+
+    const filesDir = getFilesDir();
+    const driveStats = getStorageDriveStats(filesDir);
+    if (driveStats) {
+      const usedRow = this.db
+        .prepare('SELECT COALESCE(SUM(size_bytes), 0) as total FROM files')
+        .get() as { total: number };
+      const maxQuotaBytes = usedRow.total + driveStats.freeBytes;
+      if (quotaBytes > maxQuotaBytes) {
+        throw new AuthError(
+          'QUOTA_EXCEEDS_FREE_SPACE',
+          `Quota exceeds current drive capacity. Maximum allowed now is ${formatBytesForMessage(maxQuotaBytes)}.`,
+        );
+      }
+    }
 
     this.db
       .prepare("INSERT OR REPLACE INTO storage_config (key, value) VALUES ('quota_bytes', ?)")

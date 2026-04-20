@@ -146,6 +146,11 @@ export interface ActivityRecord {
 export interface StorageStats {
   used_bytes: number;
   quota_bytes: number;
+  max_quota_bytes: number;
+  drive_total_bytes: number;
+  drive_free_bytes: number;
+  drive_used_percent: number;
+  active_storage_path: string;
   file_count: number;
   by_shelf: Array<{ shelf_id: string; shelf_name: string; size_bytes: number; file_count: number }>;
   trend: Array<{ date: string; cumulative_bytes: number }>;

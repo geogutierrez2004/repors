@@ -533,6 +533,25 @@ describe('DashboardService file extension handling', () => {
     expect(fs.existsSync(uploadPath)).toBe(true);
   });
 
+  it('storage stats expose active drive capacity metadata', () => {
+    const stats = dashboard.getStorageStats(sessionId);
+
+    expect(stats.active_storage_path).toBe(path.join(dataDir, 'files'));
+    expect(stats.max_quota_bytes).toBeGreaterThanOrEqual(stats.used_bytes);
+    expect(stats.drive_free_bytes).toBeGreaterThanOrEqual(0);
+    expect(stats.drive_total_bytes).toBeGreaterThan(0);
+    expect(stats.drive_used_percent).toBeGreaterThanOrEqual(0);
+  });
+
+  it('rejects quota larger than current drive capacity', () => {
+    try {
+      dashboard.setQuota(sessionId, Number.MAX_SAFE_INTEGER);
+      expect.fail('Expected QUOTA_EXCEEDS_FREE_SPACE');
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'QUOTA_EXCEEDS_FREE_SPACE' });
+    }
+  });
+
   it('rejects privileged operations when session is invalid', async () => {
     await expect(
       dashboard.uploadFile(

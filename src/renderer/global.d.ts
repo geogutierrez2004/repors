@@ -137,6 +137,9 @@ declare global {
         setQuota(sessionId: string, quotaBytes: number): Promise<IpcResponse<null>>;
         backup(sessionId: string): Promise<IpcResponse<{ path: string }>>;
         restore(sessionId: string): Promise<IpcResponse<null>>;
+        getDriveStatus(
+          sessionId: string,
+        ): Promise<IpcResponse<Array<{ drive: string; usedPercent: number; warningLevel: 'ok' | 'warning' | 'critical' }>>>;
       };
 
       sessions: {

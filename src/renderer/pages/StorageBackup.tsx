@@ -33,12 +33,14 @@ function fmtBytes(b: number): string {
 
 function SetQuotaModal({
   current,
+  maxQuota,
   sessionId,
   addToast,
   onClose,
   onDone,
 }: {
   current: number;
+  maxQuota: number;
   sessionId: string;
   addToast: AddToast;
   onClose: () => void;
@@ -54,8 +56,15 @@ function SetQuotaModal({
       addToast('error', 'Enter a valid quota in GB');
       return;
     }
+
+    const nextQuotaBytes = Math.round(gb * 1e9);
+    if (nextQuotaBytes > maxQuota) {
+      addToast('error', `Quota cannot exceed current drive capacity (${fmtBytes(maxQuota)}).`);
+      return;
+    }
+
     setLoading(true);
-    const res = await window.sccfs.storage.setQuota(sessionId, Math.round(gb * 1e9));
+    const res = await window.sccfs.storage.setQuota(sessionId, nextQuotaBytes);
     setLoading(false);
     if (res.ok) {
       addToast('success', `Quota set to ${gb} GB`);
@@ -83,12 +92,13 @@ function SetQuotaModal({
           min="1"
           step="1"
           value={value}
+          max={Math.max(1, Math.floor(maxQuota / 1e9))}
           onChange={(e) => setValue(e.target.value)}
           style={inputStyle}
           autoFocus
         />
         <p style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 20 }}>
-          Maximum allowed: no hard limit enforced by the app, but uploads will be blocked when this is reached.
+          Maximum allowed right now: {fmtBytes(maxQuota)} (based on active drive free space).
         </p>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button type="button" onClick={onClose} style={btnStyle('secondary', true)}>Cancel</button>
@@ -346,6 +356,22 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
             {fmtBytes(stats.used_bytes)} / {fmtBytes(stats.quota_bytes)}
           </span>
         </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 8 }}>
+          <span style={{ color: 'var(--text-secondary)' }}>
+            Active path: {stats.active_storage_path}
+          </span>
+          <span style={{ color: 'var(--text-secondary)' }}>
+            Free on drive: {fmtBytes(stats.drive_free_bytes)}
+          </span>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginTop: 4 }}>
+          <span style={{ color: 'var(--text-secondary)' }}>
+            Drive usage: {stats.drive_used_percent.toFixed(1)}%
+          </span>
+          <span style={{ color: 'var(--text-secondary)' }}>
+            Max quota now: {fmtBytes(stats.max_quota_bytes)}
+          </span>
+        </div>
         {usedPct >= 80 && (
           <div
             style={{
@@ -514,6 +540,7 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
       {showQuotaModal && (
         <SetQuotaModal
           current={stats.quota_bytes}
+          maxQuota={stats.max_quota_bytes}
           sessionId={sessionId}
           addToast={addToast}
           onClose={() => setShowQuotaModal(false)}
