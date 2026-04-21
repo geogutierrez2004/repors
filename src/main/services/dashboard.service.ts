@@ -1259,19 +1259,6 @@ export class DashboardService {
     };
   }
 
-  getMaxQuotaAllowed(sessionId: string): number {
-    requireAuth(sessionId);
-
-    try {
-      const stat = fs.statfsSync(getFilesDir(), { bigint: true });
-      const availableBytes = stat.bavail * stat.bsize;
-      const maxQuotaAllowed = (availableBytes * BigInt(90)) / 100n;
-      return Number(maxQuotaAllowed);
-    } catch (e) {
-      throw new AuthError('MAX_QUOTA_FAILED', 'Failed to determine maximum quota');
-    }
-  }
-
   setQuota(sessionId: string, quotaBytes: number): void {
     requireAuth(sessionId);
 
@@ -1445,7 +1432,7 @@ export class DashboardService {
           totalBytes: totals.total_bytes,
         },
         checksum: {
-          sccfsDbSha256: computeSha256(backupDbPath),
+          sccfsDbSha256: await computeSha256Stream(backupDbPath),
         },
       };
       fs.writeFileSync(backupMetaPath, JSON.stringify(meta, null, 2), 'utf-8');

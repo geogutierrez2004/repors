@@ -33,14 +33,12 @@ function fmtBytes(b: number): string {
 
 function SetQuotaModal({
   current,
-  maxGb,
   sessionId,
   addToast,
   onClose,
   onDone,
 }: {
   current: number;
-  maxGb: number;
   sessionId: string;
   addToast: AddToast;
   onClose: () => void;
@@ -54,10 +52,6 @@ function SetQuotaModal({
     const gb = parseFloat(value);
     if (isNaN(gb) || gb <= 0) {
       addToast('error', 'Enter a valid quota in GB');
-      return;
-    }
-    if (gb > maxGb) {
-      addToast('error', `Quota cannot exceed ${Math.round(maxGb)} GB (90% of available space)`);
       return;
     }
     setLoading(true);
@@ -87,7 +81,6 @@ function SetQuotaModal({
         <input
           type="number"
           min="1"
-          max={Math.round(maxGb)}
           step="1"
           value={value}
           onChange={(e) => setValue(e.target.value)}
@@ -95,7 +88,7 @@ function SetQuotaModal({
           autoFocus
         />
         <p style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 20 }}>
-          Maximum allowed: {Math.round(maxGb)} GB (90% of available disk space).
+          Maximum allowed: no hard limit enforced by the app, but uploads will be blocked when this is reached.
         </p>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button type="button" onClick={onClose} style={btnStyle('secondary', true)}>Cancel</button>
@@ -204,7 +197,6 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
   const [backupLoading, setBackupLoading] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [showQuotaModal, setShowQuotaModal] = useState(false);
-  const [maxQuotaGb, setMaxQuotaGb] = useState(0);
   const [showBackupConfirm, setShowBackupConfirm] = useState(false);
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
 
@@ -240,16 +232,6 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
       addToast('success', 'Restore completed. Refreshing application state…');
     } else if (res.error?.code !== 'CANCELLED') {
       addToast('error', res.error?.message ?? 'Restore failed');
-    }
-  };
-
-  const handleOpenQuotaModal = async () => {
-    const res = await window.sccfs.storage.getMaxQuota(sessionId);
-    if (res.ok) {
-      setMaxQuotaGb(Math.round(res.data / 1e9));
-      setShowQuotaModal(true);
-    } else {
-      addToast('error', res.error?.message ?? 'Failed to fetch maximum quota');
     }
   };
 
@@ -335,7 +317,7 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
       <div style={{ ...cardStyle(), marginBottom: 20 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
           <h2 style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>Storage Quota</h2>
-          <button onClick={handleOpenQuotaModal} style={btnStyle('secondary', true)}>
+          <button onClick={() => setShowQuotaModal(true)} style={btnStyle('secondary', true)}>
             ⚙ Set Quota
           </button>
         </div>
@@ -532,7 +514,6 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
       {showQuotaModal && (
         <SetQuotaModal
           current={stats.quota_bytes}
-          maxGb={maxQuotaGb}
           sessionId={sessionId}
           addToast={addToast}
           onClose={() => setShowQuotaModal(false)}
