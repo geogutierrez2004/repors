@@ -24,8 +24,8 @@ export function up(db: Database.Database): void {
       name        TEXT NOT NULL UNIQUE,
       is_system   INTEGER NOT NULL DEFAULT 0,
       created_by  TEXT REFERENCES users(id),
-      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at  TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+      updated_at  TEXT NOT NULL DEFAULT (datetime('now', 'utc'))
     );
 
     CREATE TABLE IF NOT EXISTS file_payloads (
@@ -35,8 +35,8 @@ export function up(db: Database.Database): void {
       size_bytes    INTEGER NOT NULL,
       is_encrypted  INTEGER NOT NULL DEFAULT 0,
       ref_count     INTEGER NOT NULL DEFAULT 1,
-      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at    TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+      updated_at    TEXT NOT NULL DEFAULT (datetime('now', 'utc'))
     );
 
     CREATE TABLE IF NOT EXISTS files (
@@ -51,8 +51,8 @@ export function up(db: Database.Database): void {
       uploaded_by   TEXT NOT NULL REFERENCES users(id),
       is_encrypted  INTEGER NOT NULL DEFAULT 0,
       payload_id    TEXT REFERENCES file_payloads(id),
-      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at    TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+      updated_at    TEXT NOT NULL DEFAULT (datetime('now', 'utc'))
     );
 
     CREATE TABLE IF NOT EXISTS upload_history (
@@ -61,7 +61,7 @@ export function up(db: Database.Database): void {
       user_id     TEXT NOT NULL REFERENCES users(id),
       status      TEXT NOT NULL CHECK (status IN ('pending','in_progress','completed','failed')),
       error       TEXT,
-      started_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      started_at  TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
       completed_at TEXT
     );
 
@@ -69,7 +69,7 @@ export function up(db: Database.Database): void {
       id          TEXT PRIMARY KEY,
       file_id     TEXT NOT NULL REFERENCES files(id),
       user_id     TEXT NOT NULL REFERENCES users(id),
-      downloaded_at TEXT NOT NULL DEFAULT (datetime('now'))
+      downloaded_at TEXT NOT NULL DEFAULT (datetime('now', 'utc'))
     );
 
     CREATE TABLE IF NOT EXISTS activity_log (
@@ -77,7 +77,7 @@ export function up(db: Database.Database): void {
       user_id     TEXT REFERENCES users(id),
       action      TEXT NOT NULL,
       detail      TEXT,
-      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at  TEXT NOT NULL DEFAULT (datetime('now', 'utc'))
     );
 
     CREATE TABLE IF NOT EXISTS storage_config (
@@ -92,7 +92,7 @@ export function up(db: Database.Database): void {
       iv          TEXT NOT NULL,
       auth_tag    TEXT NOT NULL,
       iterations  INTEGER NOT NULL,
-      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at  TEXT NOT NULL DEFAULT (datetime('now', 'utc'))
     );
 
     CREATE TABLE IF NOT EXISTS app_config (

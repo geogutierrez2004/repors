@@ -10,8 +10,8 @@ export function up(db: Database.Database): void {
       size_bytes    INTEGER NOT NULL,
       is_encrypted  INTEGER NOT NULL DEFAULT 0,
       ref_count     INTEGER NOT NULL DEFAULT 1,
-      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      created_at    TEXT NOT NULL DEFAULT (datetime('now', 'utc')),
+      updated_at    TEXT NOT NULL DEFAULT (datetime('now', 'utc'))
     );
 
     CREATE INDEX IF NOT EXISTS idx_file_payloads_sha_size_enc
@@ -52,7 +52,7 @@ export function up(db: Database.Database): void {
      VALUES (?, ?, ?, ?, ?, 1)`,
   );
   const updatePayloadRef = db.prepare(
-    "UPDATE file_payloads SET ref_count = ?, updated_at = datetime('now') WHERE id = ?",
+    "UPDATE file_payloads SET ref_count = ?, updated_at = datetime('now', 'utc') WHERE id = ?",
   );
   const setFilePayload = db.prepare('UPDATE files SET payload_id = ? WHERE id = ?');
 

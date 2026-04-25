@@ -1,83 +1,113 @@
 flowchart TB
   subgraph EXT[" External Entities "]
-    U["👤 Users"]
-    SM["📊 Backup System"]
+    ADMIN["👨‍💼 Admin User"]
+    STAFF["👨‍💼 Staff User"]
+    STORAGE["💾 External Storage<br/>(Backup/Restore)"]
   end
   
   subgraph CORE[" Core Processes "]
-    P1["P1.0 Authentication<br/>& Session Mgmt"]
-    P2["P2.0 File Upload<br/>& Encryption"]
-    P3["P3.0 File Organization<br/>& Folders"]
-    P4["P4.0 File Download<br/>& Decryption"]
-    P5["P5.0 Temporary<br/>Secure View"]
-    P6["P6.0 RBAC & Access<br/>Control"]
-    P7["P7.0 Backup<br/>& Restore"]
-    P8["P8.0 Security Integrity<br/>& Threshold Settings"]
+    P1["P1: Authentication<br/>& Session Mgmt"]
+    P2["P2: File Upload<br/>& Encryption"]
+    P3["P3: Shelf Organization<br/>(Folders)"]
+    P4["P4: File Download<br/>& Decryption"]
+    P5["P5: Secure File<br/>Preview"]
+    P6["P6: File Management<br/>(Rename/Move/Delete)"]
+    P7["P7: RBAC<br/>Enforcement"]
+    P8["P8: Backup<br/>& Restore"]
+    P9["P9: Security Integrity<br/>& Thresholds"]
+    P10["P10: Activity<br/>Logging"]
   end
   
   subgraph DATA[" Data Stores "]
-    D1[("D1: User<br/>& Session")]
-    D2[("D2: File<br/>Metadata")]
+    D1[("D1: User Profiles<br/>& Sessions")]
+    D2[("D2: File Metadata<br/>& Filenames")]
     D3[("D3: Encrypted<br/>Payloads")]
-    D4[("D4: Folders<br/>& Org")]
-    D5[("D5: Encryption<br/>Keys & Salt")]
-    D6[("D6: Activity<br/>Log")]
-    D7[("D7: Quota<br/>Config")]
-    D8[("D8: Temp<br/>Files")]
-    D9[("D9: Severity<br/>Threshold Settings")]
+    D4[("D4: Shelves<br/>& Organization")]
+    D5[("D5: Encryption Keys<br/>& Salt/IV")]
+    D6[("D6: Activity<br/>Audit Log")]
+    D7[("D7: Storage Quota<br/>& Config")]
+    D8[("D8: Temp Files<br/>Preview Cache")]
+    D9[("D9: Security<br/>Thresholds")]
   end
   
-  U -->|1. Login| P1
-  P1 -->|2. Auth Result| U
+  ADMIN -->|Login| P1
+  STAFF -->|Login| P1
+  P1 -->|Auth Result| ADMIN
+  P1 -->|Auth Result| STAFF
   P1 <--> D1
-  P1 --> D6
+  P1 --> P10
   
-  U -->|3. Upload| P2
+  ADMIN -->|Upload| P2
+  STAFF -->|Upload| P2
+  P2 -.->|Check RBAC| P7
   P2 <--> D2
   P2 <--> D3
   P2 <--> D5
-  P2 --> D6
+  P2 --> P10
   
-  U -->|4. Organize| P3
+  ADMIN -->|Create/Rename/Delete| P3
+  STAFF -->|Create/Rename| P3
+  P3 -.->|Check RBAC| P7
   P3 <--> D4
-  P3 --> D6
+  P3 --> P10
   
-  U -->|5. Download| P4
+  ADMIN -->|Download| P4
+  STAFF -->|Download| P4
   P4 <--> D2
   P4 <--> D3
   P4 <--> D5
-  P4 -->|6. File| U
-  P4 --> D6
+  P4 -->|File| ADMIN
+  P4 -->|File| STAFF
+  P4 --> P10
   
-  U -->|7. Preview| P5
+  ADMIN -->|Preview| P5
+  STAFF -->|Preview| P5
   P5 <--> D3
   P5 <--> D5
   P5 <--> D8
-  P5 -->|Temp URL| U
-  P5 --> D6
+  P5 -->|Temp URL| ADMIN
+  P5 -->|Temp URL| STAFF
+  P5 --> P10
   
-  P1 -.->|Check RBAC| P6
-  P2 -.->|Check RBAC| P6
-  P6 <--> D1
+  ADMIN -->|Rename/Move/Delete| P6
+  STAFF -->|Rename/Move<br/>(No Delete)| P6
+  P6 -.->|Check RBAC| P7
+  P6 <--> D2
+  P6 <--> D3
+  P6 --> P10
   
-  SM -->|8. Backup| P7
-  P7 --> D1
-  P7 --> D2
-  P7 --> D3
-  P7 -->|Archive| SM
-  P7 --> D6
+  P1 -.->|Verify| P7
+  P2 -.->|Verify| P7
+  P3 -.->|Verify| P7
+  P6 -.->|Verify| P7
+  P7 <--> D1
   
-  SM -->|9. Restore| P7
-
-  U -->|10. Configure Thresholds| P8
-  P8 -->|11. Severity Alerts| U
-  P8 <--> D6
-  P8 <--> D9
+  STORAGE -->|Backup| P8
+  P8 --> D1
+  P8 --> D2
+  P8 --> D3
+  P8 --> D4
+  P8 --> D9
+  P8 -->|Archive| STORAGE
+  P8 --> P10
+  
+  STORAGE -->|Restore| P8
+  
+  ADMIN -->|Set Thresholds| P9
+  P9 <--> D9
+  P9 -->|Severity Alerts| ADMIN
+  P9 --> P10
+  
+  P10 <--> D6
   
   classDef process fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
   classDef datastore fill:#e0f2f1,stroke:#00695c,stroke-width:2px,color:#000
-  classDef external fill:#e1f5ff,stroke:#01579b,stroke-width:2px,color:#000
+  classDef admin fill:#ffcccc,stroke:#c62828,stroke-width:2px,color:#000
+  classDef staff fill:#cce5ff,stroke:#1565c0,stroke-width:2px,color:#000
+  classDef storage fill:#d4edda,stroke:#28a745,stroke-width:2px,color:#000
   
-  class P1,P2,P3,P4,P5,P6,P7,P8 process
+  class P1,P2,P3,P4,P5,P6,P7,P8,P9,P10 process
   class D1,D2,D3,D4,D5,D6,D7,D8,D9 datastore
-  class U,SM external
+  class ADMIN admin
+  class STAFF staff
+  class STORAGE storage

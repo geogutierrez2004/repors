@@ -38,6 +38,12 @@ declare global {
 
       users: {
         list(sessionId: string): Promise<IpcResponse<SafeUser[]>>;
+        create(
+          sessionId: string,
+          username: string,
+          password: string,
+          role: string,
+        ): Promise<IpcResponse<SafeUser>>;
         update(
           sessionId: string,
           userId: string,
@@ -67,6 +73,8 @@ declare global {
           sessionId: string,
           opts: { shelfId?: string; search?: string; page?: number; pageSize?: number },
         ): Promise<IpcResponse<PaginatedResult<FileRecord>>>;
+        pickUploadSources(sessionId: string): Promise<IpcResponse<{ filePaths: string[] }>>;
+        getPathForFile(file: File): string | null;
         upload(
           sessionId: string,
           shelfId: string,
@@ -74,6 +82,7 @@ declare global {
           encryptionPassword?: string,
           sourceHandlingMode?: SourceHandlingMode,
           confirmPermanentDelete?: boolean,
+          sourceFilePaths?: string[],
         ): Promise<IpcResponse<FileUploadResult>>;
         download(sessionId: string, fileId: string, decryptionPassword?: string): Promise<IpcResponse<null>>;
         viewEncrypted(
@@ -96,7 +105,12 @@ declare global {
       shelves: {
         list(sessionId: string): Promise<IpcResponse<ShelfRecord[]>>;
         create(sessionId: string, name: string): Promise<IpcResponse<ShelfRecord>>;
-        delete(sessionId: string, shelfId: string): Promise<IpcResponse<null>>;
+        delete(
+          sessionId: string,
+          shelfId: string,
+          opts?: { action?: 'move' | 'temp'; targetShelfId?: string },
+        ): Promise<IpcResponse<null>>;
+        checkContents(sessionId: string, shelfId: string): Promise<IpcResponse<{ fileCount: number; files: string[] }>>;
         rename(
           sessionId: string,
           shelfId: string,

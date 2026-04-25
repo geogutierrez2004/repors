@@ -3,43 +3,53 @@ flowchart TB
   
   ROOT --> Auth["🔐 P1: Authentication"]
   Auth --> AuthIn["<b>Input:</b><br/>Credentials (username/password)"]
-  Auth --> AuthProc["<b>Process:</b><br/>PBKDF2 verify<br/>Session token create<br/>RBAC role lookup"]
-  Auth --> AuthOut["<b>Output:</b><br/>Auth token<br/>Session cookie<br/>Dashboard view"]
+  Auth --> AuthProc["<b>Process:</b><br/>PBKDF2 verify<br/>Session token create<br/>RBAC role lookup<br/>(Admin or Staff)"]
+  Auth --> AuthOut["<b>Output:</b><br/>Auth token<br/>Session cookie<br/>Dashboard view<br/>(Role-based)"]
   
-  ROOT --> Upload["📄 P2: Upload & Encrypt"]
-  Upload --> UpIn["<b>Input:</b><br/>File + metadata<br/>Encryption choice<br/>Shelf selection"]
-  Upload --> UpProc["<b>Process:</b><br/>AES-256-GCM encrypt<br/>PBKDF2 key derive<br/>Store encrypted payload<br/>Log activity"]
-  Upload --> UpOut["<b>Output:</b><br/>Encrypted file<br/>Metadata record<br/>Confirmation msg"]
+  ROOT --> Upload["📤 P2: Upload & Encrypt"]
+  Upload --> UpIn["<b>Input:</b><br/>File + metadata<br/>(dialog or drag-drop)<br/>Batch file selection<br/>Shelf selection"]
+  Upload --> UpProc["<b>Process:</b><br/>RBAC check (Admin & Staff)<br/>Show batch summary modal<br/>Sanitize filename<br/>AES-256-GCM encrypt<br/>PBKDF2 key derive<br/>Store encrypted payload<br/>Log activity"]
+  Upload --> UpOut["<b>Output:</b><br/>Encrypted file<br/>Metadata record<br/>Batch confirmation<br/>Activity logged"]
   
-  ROOT --> Org["📁 P3: Organization"]
+  ROOT --> Org["📁 P3: Shelf Organization"]
   Org --> OrgIn["<b>Input:</b><br/>Folder operations<br/>(add/rename/delete)"]
-  Org --> OrgProc["<b>Process:</b><br/>Validate RBAC<br/>Update DB<br/>Refresh tree"]
-  Org --> OrgOut["<b>Output:</b><br/>Updated folder tree<br/>File listing<br/>Activity log"]
+  Org --> OrgProc["<b>Process:</b><br/>Admin: all operations<br/>Staff: add/rename only<br/>RBAC validate<br/>Update DB<br/>Refresh tree<br/>Log activity"]
+  Org --> OrgOut["<b>Output:</b><br/>Updated shelf tree<br/>File listing<br/>Activity log"]
   
   ROOT --> Download["📥 P4: Download & Decrypt"]
   Download --> DownIn["<b>Input:</b><br/>File ID<br/>Download request"]
-  Download --> DownProc["<b>Process:</b><br/>RBAC check<br/>Decrypt AES-256-GCM<br/>Stream to client"]
-  Download --> DownOut["<b>Output:</b><br/>Decrypted file<br/>Activity log<br/>Bandwidth usage"]
+  Download --> DownProc["<b>Process:</b><br/>RBAC check (Admin & Staff)<br/>Decrypt AES-256-GCM<br/>Stream to client<br/>Log activity"]
+  Download --> DownOut["<b>Output:</b><br/>Decrypted file<br/>Activity log<br/>Bandwidth tracking"]
   
-  ROOT --> View["👁️ P5: Temporary Secure View"]
+  ROOT --> View["👁️ P5: Temporary Secure Preview"]
   View --> ViewIn["<b>Input:</b><br/>File ID<br/>Preview request"]
-  View --> ViewProc["<b>Process:</b><br/>Decrypt → temp file<br/>Infer MIME type<br/>Render (PDF/Img/Doc)<br/>Schedule cleanup (2min)"]
-  View --> ViewOut["<b>Output:</b><br/>Temp preview URL<br/>CSP-safe HTML<br/>Auto-delete"]
+  View --> ViewProc["<b>Process:</b><br/>Decrypt → temp file<br/>Infer MIME type<br/>Render (PDF/Img/Doc/etc)<br/>Schedule cleanup (2min)<br/>Log activity"]
+  View --> ViewOut["<b>Output:</b><br/>Temp preview URL<br/>CSP-safe HTML<br/>Auto-delete on TTL"]
   
-  ROOT --> Backup["💾 P6: Backup"]
+  ROOT --> FileMgmt["✏️ P6: File Management"]
+  FileMgmt --> FmIn["<b>Input:</b><br/>File ID + new name<br/>Move/delete request"]
+  FileMgmt --> FmProc["<b>Process:</b><br/>RBAC check:<br/>  Admin: all operations<br/>  Staff: rename/move only<br/>Validate new filename<br/>Update DB metadata<br/>Log operation"]
+  FileMgmt --> FmOut["<b>Output:</b><br/>Updated file record<br/>Activity logged<br/>Operation confirmed"]
+  
+  ROOT --> Backup["💾 P7: Backup"]
   Backup --> BackIn["<b>Input:</b><br/>Backup trigger<br/>Timestamp"]
-  Backup --> BackProc["<b>Process:</b><br/>Export DB<br/>Archive payloads<br/>Compress + sign"]
+  Backup --> BackProc["<b>Process:</b><br/>Export SQLite DB<br/>Archive encrypted payloads<br/>Compress + sign<br/>Admin confirmation modal<br/>Log operation"]
   Backup --> BackOut["<b>Output:</b><br/>Archive file<br/>Manifest<br/>Checksum"]
   
-  ROOT --> Restore["🔄 P7: Restore"]
+  ROOT --> Restore["🔄 P8: Restore"]
   Restore --> RestIn["<b>Input:</b><br/>Archive file<br/>Restore trigger"]
-  Restore --> RestProc["<b>Process:</b><br/>Extract & verify<br/>Restore DB<br/>Sanitize filenames<br/>Invalidate sessions"]
-  Restore --> RestOut["<b>Output:</b><br/>Restored state<br/>Session reset<br/>Activity logged"]
+  Restore --> RestProc["<b>Process:</b><br/>Admin confirmation modal<br/>Extract & verify signature<br/>Restore SQLite DB<br/>Sanitize filenames<br/>Hot-swap restore handlers<br/>Invalidate all sessions<br/>Log operation"]
+  Restore --> RestOut["<b>Output:</b><br/>Restored state<br/>Session reset<br/>Activity logged<br/>Users re-login"]
 
-  ROOT --> Thresholds["🎚 P8: Threshold Settings"]
-  Thresholds --> ThrIn["<b>Input:</b><br/>Storage warning/danger %<br/>Upload failure warning/danger"]
-  Thresholds --> ThrProc["<b>Process:</b><br/>Validate bounds<br/>Persist to app_config<br/>Apply severity mapping"]
-  Thresholds --> ThrOut["<b>Output:</b><br/>Updated security card tones<br/>Threshold config saved"]
+  ROOT --> Thresholds["🎚️ P9: Security Thresholds"]
+  Thresholds --> ThrIn["<b>Input:</b><br/>Storage warning/danger %<br/>Upload failure thresholds"]
+  Thresholds --> ThrProc["<b>Process:</b><br/>Admin permission check<br/>Validate bounds<br/>Persist to app_config<br/>Apply severity mapping<br/>Log change"]
+  Thresholds --> ThrOut["<b>Output:</b><br/>Updated security card<br/>Threshold config saved<br/>Activity logged"]
+  
+  ROOT --> ActivityLog["📋 P10: Activity Log"]
+  ActivityLog --> ActIn["<b>Input:</b><br/>Date range filter<br/>Action filters<br/>Export trigger"]
+  ActivityLog --> ActProc["<b>Process:</b><br/>Query activity_log table<br/>Apply date filters<br/>Apply action filters<br/>Paginate results<br/>Format output<br/>Export to CSV<br/>All users can view"]
+  ActivityLog --> ActOut["<b>Output:</b><br/>Filtered activities<br/>CSV export file<br/>Pagination info"]
   
   classDef input fill:#e3f2fd,stroke:#1565c0,stroke-width:1.5px,color:#000
   classDef process fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
@@ -48,7 +58,7 @@ flowchart TB
   classDef step fill:#f3e5f5,stroke:#4a148c,stroke-width:1.5px,color:#000
   
   class ROOT title
-  class AuthIn,UpIn,OrgIn,DownIn,ViewIn,BackIn,RestIn,ThrIn input
-  class AuthProc,UpProc,OrgProc,DownProc,ViewProc,BackProc,RestProc,ThrProc process
-  class AuthOut,UpOut,OrgOut,DownOut,ViewOut,BackOut,RestOut,ThrOut output
-  class Auth,Upload,Org,Download,View,Backup,Restore,Thresholds step
+  class AuthIn,UpIn,OrgIn,DownIn,ViewIn,FmIn,BackIn,RestIn,ThrIn,ActIn input
+  class AuthProc,UpProc,OrgProc,DownProc,ViewProc,FmProc,BackProc,RestProc,ThrProc,ActProc process
+  class AuthOut,UpOut,OrgOut,DownOut,ViewOut,FmOut,BackOut,RestOut,ThrOut,ActOut output
+  class Auth,Upload,Org,Download,View,FileMgmt,Backup,Restore,Thresholds,ActivityLog step

@@ -27,17 +27,20 @@ export const IPC_CHANNELS = {
 
   // File management
   FILES_LIST: 'sccfs:files:list',
+  FILES_PICK_UPLOAD_SOURCES: 'sccfs:files:pick-upload-sources',
   FILES_UPLOAD: 'sccfs:files:upload',
   FILES_DOWNLOAD: 'sccfs:files:download',
   FILES_VIEW_ENCRYPTED: 'sccfs:files:view-encrypted',
   FILES_VIEW_ENCRYPTED_CLEANUP: 'sccfs:files:view-encrypted-cleanup',
   FILES_DELETE: 'sccfs:files:delete',
   FILES_MOVE: 'sccfs:files:move',
+  FILES_RENAME: 'sccfs:files:rename',
 
   // Shelf management
   SHELVES_LIST: 'sccfs:shelves:list',
   SHELVES_CREATE: 'sccfs:shelves:create',
   SHELVES_DELETE: 'sccfs:shelves:delete',
+  SHELVES_CHECK_CONTENTS: 'sccfs:shelves:check-contents',
   SHELVES_RENAME: 'sccfs:shelves:rename',
 
   // Activity log
@@ -46,8 +49,10 @@ export const IPC_CHANNELS = {
   // Storage & backup
   STORAGE_STATS: 'sccfs:storage:stats',
   STORAGE_SET_QUOTA: 'sccfs:storage:set-quota',
+  STORAGE_GET_MAX_QUOTA: 'sccfs:storage:get-max-quota',
   STORAGE_BACKUP: 'sccfs:storage:backup',
   STORAGE_RESTORE: 'sccfs:storage:restore',
+  STORAGE_DRIVE_STATUS: 'sccfs:storage:drive-status',
   APP_RESTORED: 'sccfs:app:restored',
 
   // Session management (security dashboard)

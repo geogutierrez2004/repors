@@ -33,12 +33,14 @@ function fmtBytes(b: number): string {
 
 function SetQuotaModal({
   current,
+  maxGb,
   sessionId,
   addToast,
   onClose,
   onDone,
 }: {
   current: number;
+  maxGb: number;
   sessionId: string;
   addToast: AddToast;
   onClose: () => void;
@@ -52,6 +54,10 @@ function SetQuotaModal({
     const gb = parseFloat(value);
     if (isNaN(gb) || gb <= 0) {
       addToast('error', 'Enter a valid quota in GB');
+      return;
+    }
+    if (gb > maxGb) {
+      addToast('error', `Quota cannot exceed ${Math.round(maxGb)} GB (90% of available space)`);
       return;
     }
     setLoading(true);
@@ -81,6 +87,7 @@ function SetQuotaModal({
         <input
           type="number"
           min="1"
+          max={Math.round(maxGb)}
           step="1"
           value={value}
           onChange={(e) => setValue(e.target.value)}
@@ -88,7 +95,7 @@ function SetQuotaModal({
           autoFocus
         />
         <p style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 20 }}>
-          Maximum allowed: no hard limit enforced by the app, but uploads will be blocked when this is reached.
+          Maximum allowed: {Math.round(maxGb)} GB (90% of available disk space).
         </p>
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button type="button" onClick={onClose} style={btnStyle('secondary', true)}>Cancel</button>
@@ -97,6 +104,92 @@ function SetQuotaModal({
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+// ────────────────────────────────────────
+// Confirmation modals
+// ────────────────────────────────────────
+
+function BackupConfirmModal({
+  onConfirm,
+  onCancel,
+  loading,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+  loading: boolean;
+}) {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,.4)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+      }}
+    >
+      <div style={{ ...cardStyle(), width: 400 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: 'var(--text-primary)' }}>
+          💾 Create Backup
+        </h3>
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.5 }}>
+          This will create a complete backup of all files and the database. The backup can be restored later if needed.
+        </p>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button onClick={onCancel} disabled={loading} style={btnStyle('secondary', true)}>
+            Cancel
+          </button>
+          <button onClick={onConfirm} disabled={loading} style={btnStyle('primary', true)}>
+            {loading ? 'Creating…' : 'Create Backup'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RestoreConfirmModal({
+  onConfirm,
+  onCancel,
+  loading,
+}: {
+  onConfirm: () => void;
+  onCancel: () => void;
+  loading: boolean;
+}) {
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,.4)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+      }}
+    >
+      <div style={{ ...cardStyle(), width: 400 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: 'var(--danger)' }}>
+          🔄 Restore Backup
+        </h3>
+        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.5 }}>
+          <strong>Warning:</strong> This will replace the current database with the backup. All recent changes since the backup was created will be lost. This cannot be undone.
+        </p>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button onClick={onCancel} disabled={loading} style={btnStyle('secondary', true)}>
+            Cancel
+          </button>
+          <button onClick={onConfirm} disabled={loading} style={btnStyle('danger', true)}>
+            {loading ? 'Restoring…' : 'Restore Backup'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -111,6 +204,9 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
   const [backupLoading, setBackupLoading] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [showQuotaModal, setShowQuotaModal] = useState(false);
+  const [maxQuotaGb, setMaxQuotaGb] = useState(0);
+  const [showBackupConfirm, setShowBackupConfirm] = useState(false);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
 
   const load = useCallback(async () => {
     const res = await window.sccfs.storage.stats(sessionId);
@@ -123,10 +219,11 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
     load();
   }, [load]);
 
-  const handleBackup = async () => {
+  const executeBackup = async () => {
     setBackupLoading(true);
     const res = await window.sccfs.storage.backup(sessionId);
     setBackupLoading(false);
+    setShowBackupConfirm(false);
     if (res.ok) {
       addToast('success', `Backup saved to ${res.data.path}`);
     } else if (res.error?.code !== 'CANCELLED') {
@@ -134,16 +231,34 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
     }
   };
 
-  const handleRestore = async () => {
-    if (!confirm('Restore from backup? The current database will be replaced. This cannot be undone.')) return;
+  const executeRestore = async () => {
     setRestoreLoading(true);
     const res = await window.sccfs.storage.restore(sessionId);
     setRestoreLoading(false);
+    setShowRestoreConfirm(false);
     if (res.ok) {
       addToast('success', 'Restore completed. Refreshing application state…');
     } else if (res.error?.code !== 'CANCELLED') {
       addToast('error', res.error?.message ?? 'Restore failed');
     }
+  };
+
+  const handleOpenQuotaModal = async () => {
+    const res = await window.sccfs.storage.getMaxQuota(sessionId);
+    if (res.ok) {
+      setMaxQuotaGb(Math.round(res.data / 1e9));
+      setShowQuotaModal(true);
+    } else {
+      addToast('error', res.error?.message ?? 'Failed to fetch maximum quota');
+    }
+  };
+
+  const handleBackup = () => {
+    setShowBackupConfirm(true);
+  };
+
+  const handleRestore = () => {
+    setShowRestoreConfirm(true);
   };
 
   if (loading) {
@@ -167,15 +282,22 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
     : 0;
   const barColor = usedPct >= 95 ? '#dc2626' : usedPct >= 80 ? '#d97706' : '#4f46e5';
 
-  const shelfChartData = stats.by_shelf.map((s: StorageStats['by_shelf'][number]) => ({
-    name: s.shelf_name.length > 12 ? s.shelf_name.slice(0, 12) + '…' : s.shelf_name,
-    size_gb: parseFloat((s.size_bytes / 1e9).toFixed(3)),
-    files: s.file_count,
-  }));
+  const shelfChartData = stats.by_shelf.map((s: StorageStats['by_shelf'][number]) => {
+    const mb = s.size_bytes / 1e6;
+    const displayValue = mb >= 1000 ? mb / 1024 : mb;
+    const displayUnit = mb >= 1000 ? 'GB' : 'MB';
+    return {
+      name: s.shelf_name.length > 12 ? s.shelf_name.slice(0, 12) + '…' : s.shelf_name,
+      size_value: displayValue,
+      size_unit: displayUnit,
+      files: s.file_count,
+      tooltipLabel: `${displayValue.toFixed(1)} ${displayUnit}`,
+    };
+  });
 
   const trendData = stats.trend.map((t: StorageStats['trend'][number]) => ({
     date: t.date.slice(5),
-    gb: parseFloat((t.cumulative_bytes / 1e9).toFixed(3)),
+    mb: parseFloat((t.cumulative_bytes / 1e6).toFixed(1)),
   }));
 
   return (
@@ -213,7 +335,7 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
       <div style={{ ...cardStyle(), marginBottom: 20 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
           <h2 style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>Storage Quota</h2>
-          <button onClick={() => setShowQuotaModal(true)} style={btnStyle('secondary', true)}>
+          <button onClick={handleOpenQuotaModal} style={btnStyle('secondary', true)}>
             ⚙ Set Quota
           </button>
         </div>
@@ -271,38 +393,39 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
           {shelfChartData.length === 0 ? (
             <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>No data</p>
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart
-                data={shelfChartData}
-                layout="vertical"
-                margin={{ top: 0, right: 30, bottom: 0, left: 10 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
-                <XAxis
-                  type="number"
-                  unit=" GB"
-                  tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
-                  tickLine={false}
-                />
-                <YAxis
-                  type="category"
-                  dataKey="name"
-                  tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
-                  tickLine={false}
-                  width={80}
-                />
-                <Tooltip
-                  formatter={(v) => [`${v ?? 0} GB`, 'Size'] as [string, string]}
-                  contentStyle={{
-                    background: 'var(--bg-surface)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 8,
-                    fontSize: 12,
-                  }}
-                />
-                <Bar dataKey="size_gb" fill="#4f46e5" radius={[0, 4, 4, 0]} name="Size (GB)" />
-              </BarChart>
-            </ResponsiveContainer>
+            <div style={{ overflowY: 'auto', maxHeight: 320 }}>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart
+                  data={shelfChartData}
+                  layout="vertical"
+                  margin={{ top: 0, right: 30, bottom: 0, left: 10 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
+                  <XAxis
+                    type="number"
+                    tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
+                    tickLine={false}
+                    width={80}
+                  />
+                  <Tooltip
+                    formatter={(v, _name, props) => [`${props.payload.tooltipLabel}`, 'Size'] as [string, string]}
+                    contentStyle={{
+                      background: 'var(--bg-surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 8,
+                      fontSize: 12,
+                    }}
+                  />
+                  <Bar dataKey="size_value" fill="#4f46e5" radius={[0, 4, 4, 0]} name="Size" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
           )}
         </div>
 
@@ -314,50 +437,52 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
           {trendData.length === 0 ? (
             <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>No trend data yet</p>
           ) : (
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={trendData} margin={{ top: 0, right: 10, bottom: 0, left: -20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                <XAxis
-                  dataKey="date"
-                  tick={{ fontSize: 10, fill: 'var(--text-secondary)' }}
-                  tickLine={false}
-                  interval="preserveStartEnd"
-                />
-                <YAxis
-                  tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
-                  tickLine={false}
-                  unit=" GB"
-                />
-                <Tooltip
-                  formatter={(v) => [`${v ?? 0} GB`, 'Cumulative'] as [string, string]}
-                  contentStyle={{
-                    background: 'var(--bg-surface)',
-                    border: '1px solid var(--border)',
-                    borderRadius: 8,
-                    fontSize: 12,
-                  }}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="gb"
-                  stroke="#4f46e5"
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 4 }}
-                  name="Cumulative (GB)"
-                />
-              </LineChart>
-            </ResponsiveContainer>
+            <div style={{ overflowX: 'auto' }}>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={trendData} margin={{ top: 0, right: 10, bottom: 0, left: -20 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fontSize: 10, fill: 'var(--text-secondary)' }}
+                    tickLine={false}
+                    interval="preserveStartEnd"
+                  />
+                  <YAxis
+                    tick={{ fontSize: 11, fill: 'var(--text-secondary)' }}
+                    tickLine={false}
+                    unit=" MB"
+                  />
+                  <Tooltip
+                    formatter={(v) => [`${v ?? 0} MB`, 'Cumulative'] as [string, string]}
+                    contentStyle={{
+                      background: 'var(--bg-surface)',
+                      border: '1px solid var(--border)',
+                      borderRadius: 8,
+                      fontSize: 12,
+                    }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="mb"
+                    stroke="#4f46e5"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4 }}
+                    name="Cumulative (MB)"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           )}
         </div>
       </div>
 
-      {/* Shelf breakdown table */}
+      {/* Folder breakdown table */}
       <div style={{ ...cardStyle(), padding: 0, overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: 'var(--bg-hover)', borderBottom: '1px solid var(--border)' }}>
-              {['Shelf', 'Files', 'Size', 'Share'].map((h) => (
+              {['Folder', 'Files', 'Size', 'Share'].map((h) => (
                 <th key={h} style={thStyle()}>{h}</th>
               ))}
             </tr>
@@ -407,10 +532,27 @@ export function StorageBackup({ sessionId, addToast }: Props): React.JSX.Element
       {showQuotaModal && (
         <SetQuotaModal
           current={stats.quota_bytes}
+          maxGb={maxQuotaGb}
           sessionId={sessionId}
           addToast={addToast}
           onClose={() => setShowQuotaModal(false)}
           onDone={load}
+        />
+      )}
+
+      {showBackupConfirm && (
+        <BackupConfirmModal
+          onConfirm={executeBackup}
+          onCancel={() => setShowBackupConfirm(false)}
+          loading={backupLoading}
+        />
+      )}
+
+      {showRestoreConfirm && (
+        <RestoreConfirmModal
+          onConfirm={executeRestore}
+          onCancel={() => setShowRestoreConfirm(false)}
+          loading={restoreLoading}
         />
       )}
     </div>

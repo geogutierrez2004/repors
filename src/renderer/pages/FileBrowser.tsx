@@ -48,7 +48,7 @@ function fmtBytes(b: number): string {
 }
 
 function fmtDate(ts: string): string {
-  return new Date(ts).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+  return new Date(ts).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 }
 
 // ────────────────────────────────────────
@@ -95,7 +95,7 @@ function MoveModal({
             marginBottom: 16,
           }}
         >
-          {shelves.map((s) => (
+          {shelves.filter((s) => s.name !== 'Archive' && s.name !== 'Inbox').map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
             </option>
@@ -178,6 +178,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   const [sourceHandlingModalResolve, setSourceHandlingModalResolve] = useState<((mode: SourceHandlingMode) => void) | null>(null);
   const [showUploadPasswordModal, setShowUploadPasswordModal] = useState(false);
   const [pendingUploadMode, setPendingUploadMode] = useState<SourceHandlingMode>('keep_original');
+  const [pendingUploadSourcePaths, setPendingUploadSourcePaths] = useState<string[]>([]);
   const [uploadPasswordError, setUploadPasswordError] = useState<string | null>(null);
   const [decryptPrompt, setDecryptPrompt] = useState<{ fileId: string; name: string; mode: 'download' | 'view' } | null>(null);
   const [decryptionPassword, setDecryptionPassword] = useState('');
@@ -199,6 +200,21 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     width: PREVIEW_MODAL_DEFAULT_WIDTH,
     height: PREVIEW_MODAL_DEFAULT_HEIGHT,
   });
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
+  const [renameModal, setRenameModal] = useState<{ fileId: string; currentName: string } | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [deleteConfirmModal, setDeleteConfirmModal] = useState<{ type: 'file' | 'folder'; ids?: string[]; name?: string } | null>(null);
+  const [folderContentsModal, setFolderContentsModal] = useState<{
+    shelfId: string;
+    shelfName: string;
+    fileCount: number;
+    files: string[];
+  } | null>(null);
+  const [contentsAction, setContentsAction] = useState<'move' | 'temp' | null>(null);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [sortBy, setSortBy] = useState<'name' | 'date'>('name');
+  const [sortAsc, setSortAsc] = useState(true);
   const resizeStartRef = useRef<{
     mouseX: number;
     mouseY: number;
@@ -257,6 +273,26 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     () => (viewer ? getPreviewKind(viewer.mimeType, viewer.fileName) : 'fallback'),
     [viewer],
   );
+
+  // Sort files by name or date
+  const sortedFiles = useMemo(() => {
+    const sorted = [...files.items];
+    if (sortBy === 'name') {
+      sorted.sort((a, b) => {
+        const aName = a.original_name.toLowerCase();
+        const bName = b.original_name.toLowerCase();
+        return sortAsc ? aName.localeCompare(bName) : bName.localeCompare(aName);
+      });
+    } else if (sortBy === 'date') {
+      sorted.sort((a, b) => {
+        const aDate = new Date(a.created_at).getTime();
+        const bDate = new Date(b.created_at).getTime();
+        return sortAsc ? aDate - bDate : bDate - aDate;
+      });
+    }
+    return sorted;
+  }, [files.items, sortBy, sortAsc]);
+
   const conversionSettled = isConvertedKind(previewKind) && !conversionLoading && !conversionError;
   const viewerDataUrl = useMemo(() => {
     if (!viewer) return '';
@@ -442,6 +478,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     if (!selectedShelf) return;
     setUploadLoading(true);
     const effectiveMode = pendingUploadMode;
+    const sourcePaths = pendingUploadSourcePaths.length > 0 ? pendingUploadSourcePaths : undefined;
     const res = await window.sccfs.files.upload(
       sessionId,
       selectedShelf,
@@ -449,8 +486,10 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       encryptionPassword,
       effectiveMode,
       false,
+      sourcePaths,
     );
     setUploadLoading(false);
+    setPendingUploadSourcePaths([]);
     if (res.ok) {
       const successes = res.data.files.filter((f) => f.success);
       const failures = res.data.files.filter((f) => !f.success);
@@ -480,28 +519,51 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     }
   };
 
+  const resolveSourceHandlingChoice = async (): Promise<void> => {
+    if (sourceHandlingMode !== 'ask_each_time') {
+      setPendingUploadMode(sourceHandlingMode);
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      setSourceHandlingModalResolve(() => (mode: SourceHandlingMode) => {
+        setPendingUploadMode(mode);
+        setShowSourceHandlingModal(false);
+        resolve();
+      });
+      setShowSourceHandlingModal(true);
+    });
+  };
+
+  const beginUploadPasswordStep = async (sourcePaths: string[]) => {
+    setPendingUploadSourcePaths(sourcePaths);
+    await resolveSourceHandlingChoice();
+    if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
+    if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
+    setUploadPasswordError(null);
+    setShowUploadPasswordModal(true);
+  };
+
   const handleUpload = async () => {
     if (!selectedShelf) {
       addToast('warning', 'Select a folder before uploading');
       return;
     }
-    if (sourceHandlingMode === 'ask_each_time') {
-      // Show modal and wait for user choice
-      await new Promise<void>((resolve) => {
-        setSourceHandlingModalResolve(() => (mode: SourceHandlingMode) => {
-          setPendingUploadMode(mode);
-          setShowSourceHandlingModal(false);
-          resolve();
-        });
-        setShowSourceHandlingModal(true);
-      });
-    } else {
-      setPendingUploadMode(sourceHandlingMode);
+
+    const pickRes = await window.sccfs.files.pickUploadSources(sessionId);
+    if (!pickRes.ok) {
+      if (pickRes.error?.code !== 'CANCELLED') {
+        addToast('error', pickRes.error?.message ?? 'Failed to select files');
+      }
+      return;
     }
-    if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
-    if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
-    setUploadPasswordError(null);
-    setShowUploadPasswordModal(true);
+
+    const sourcePaths = pickRes.data.filePaths;
+    if (sourcePaths.length === 0) {
+      addToast('warning', 'No files selected');
+      return;
+    }
+
+    await beginUploadPasswordStep(sourcePaths);
   };
 
   const handleDownload = async (fileId: string, name: string, encrypted: boolean) => {
@@ -600,7 +662,21 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   };
 
   const handleDelete = async (ids: string[]) => {
-    if (!confirm(`Delete ${ids.length} file(s)? This cannot be undone.`)) return;
+    setDeleteConfirmModal({ type: 'file', ids });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirmModal || deleteConfirmModal.type !== 'file' || !deleteConfirmModal.ids) return;
+    
+    // Staff users cannot delete files
+    if (user.role !== 'admin') {
+      addToast('error', 'Only admins can delete files');
+      setDeleteConfirmModal(null);
+      return;
+    }
+
+    const ids = deleteConfirmModal.ids;
+    setDeleteConfirmModal(null);
     for (const id of ids) {
       const res = await window.sccfs.files.delete(sessionId, id);
       if (!res.ok) {
@@ -645,7 +721,48 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
   };
 
   const handleDeleteShelf = async (shelfId: string, name: string) => {
-    if (!confirm(`Delete folder "${name}"? Files will be moved to Inbox.`)) return;
+    // Staff users cannot delete folders
+    if (user.role !== 'admin') {
+      addToast('error', 'Only admins can delete folders');
+      return;
+    }
+
+    // Check if shelf has contents
+    const contentsRes = await window.sccfs.shelves.checkContents(sessionId, shelfId);
+    if (!contentsRes.ok) {
+      addToast('error', contentsRes.error?.message ?? 'Failed to check folder contents');
+      return;
+    }
+
+    if (contentsRes.data.fileCount > 0) {
+      // Show modal to create new folder and move files
+      setFolderContentsModal({
+        shelfId,
+        shelfName: name,
+        fileCount: contentsRes.data.fileCount,
+        files: contentsRes.data.files,
+      });
+      setContentsAction('move');
+      setNewFolderName('');
+    } else {
+      // No contents, delete immediately
+      const res = await window.sccfs.shelves.delete(sessionId, shelfId);
+      if (res.ok) {
+        addToast('success', `Folder "${name}" deleted`);
+        if (selectedShelf === shelfId) setSelectedShelf(undefined);
+        loadShelves();
+        loadFiles();
+      } else {
+        addToast('error', res.error?.message ?? 'Failed to delete folder');
+      }
+    }
+  };
+
+  const confirmDeleteShelf = async () => {
+    if (!deleteConfirmModal || deleteConfirmModal.type !== 'folder' || !deleteConfirmModal.ids || !deleteConfirmModal.name) return;
+    const shelfId = deleteConfirmModal.ids[0];
+    const name = deleteConfirmModal.name;
+    setDeleteConfirmModal(null);
     const res = await window.sccfs.shelves.delete(sessionId, shelfId);
     if (res.ok) {
       addToast('success', `Folder "${name}" deleted`);
@@ -655,6 +772,47 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     } else {
       addToast('error', res.error?.message ?? 'Failed to delete folder');
     }
+  };
+
+  const handleFolderContentsAction = async () => {
+    if (!folderContentsModal) return;
+
+    setFolderContentsModal(null);
+
+    // Create new folder first
+    if (!newFolderName.trim()) {
+      addToast('error', 'Please enter a folder name');
+      setNewFolderName('');
+      setContentsAction(null);
+      return;
+    }
+
+    const createRes = await window.sccfs.shelves.create(sessionId, newFolderName);
+    if (!createRes.ok) {
+      addToast('error', createRes.error?.message ?? 'Failed to create folder');
+      setNewFolderName('');
+      setContentsAction(null);
+      return;
+    }
+
+    const newFolderId = createRes.data.id;
+
+    // Now delete original folder and move files
+    const deleteRes = await window.sccfs.shelves.delete(sessionId, folderContentsModal.shelfId, {
+      action: 'move',
+      targetShelfId: newFolderId,
+    });
+    if (deleteRes.ok) {
+      addToast('success', `Folder "${folderContentsModal.shelfName}" deleted and files moved to "${newFolderName}"`);
+      if (selectedShelf === folderContentsModal.shelfId) setSelectedShelf(undefined);
+      loadShelves();
+      loadFiles();
+    } else {
+      addToast('error', deleteRes.error?.message ?? 'Failed to delete folder');
+    }
+
+    setNewFolderName('');
+    setContentsAction(null);
   };
 
   const toggleSelect = (id: string) => {
@@ -671,6 +829,75 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       setSelected(new Set());
     } else {
       setSelected(new Set(files.items.map((f: FileRecord) => f.id)));
+    }
+  };
+
+  const handleDragEnter = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFiles(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget === e.target) {
+      setIsDraggingFiles(false);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingFiles(false);
+
+    if (!selectedShelf) {
+      addToast('warning', 'Select a folder before uploading');
+      return;
+    }
+
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    if (droppedFiles.length === 0) return;
+
+    const sourcePaths = droppedFiles
+      .map((file) => window.sccfs.files.getPathForFile(file))
+      .filter((value): value is string => typeof value === 'string' && value.length > 0);
+
+    if (sourcePaths.length === 0) {
+      addToast('error', 'Could not read dropped file paths. Please use the Upload button.');
+      return;
+    }
+
+    void beginUploadPasswordStep(sourcePaths);
+  };
+
+  const handleRename = async () => {
+    if (!renameModal) return;
+    const trimmed = renameValue.trim();
+    if (!trimmed) {
+      setRenameError('File name cannot be empty');
+      return;
+    }
+    if (trimmed === renameModal.currentName) {
+      setRenameModal(null);
+      setRenameValue('');
+      return;
+    }
+
+    const res = await window.sccfs.files.rename(sessionId, renameModal.fileId, trimmed);
+    if (res.ok) {
+      addToast('success', `Renamed to "${trimmed}"`);
+      setRenameModal(null);
+      setRenameValue('');
+      setRenameError(null);
+      loadFiles();
+    } else {
+      setRenameError(res.error?.message ?? 'Rename failed');
     }
   };
 
@@ -765,7 +992,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
           </span>
         </button>
 
-        {shelves.map((s) => (
+        {shelves.filter((s) => s.name !== 'Archive' && s.name !== 'Inbox').map((s) => (
           <div
             key={s.id}
             style={{
@@ -806,14 +1033,16 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             {!s.is_system && (
               <button
                 onClick={() => handleDeleteShelf(s.id, s.name)}
-                title="Delete folder"
+                disabled={user.role !== 'admin'}
+                title={user.role !== 'admin' ? 'Only admins can delete folders' : 'Delete folder'}
                 style={{
                   background: 'none',
                   border: 'none',
-                  color: 'var(--text-secondary)',
-                  cursor: 'pointer',
+                  color: user.role !== 'admin' ? 'var(--text-secondary)' : 'var(--danger)',
+                  cursor: user.role !== 'admin' ? 'not-allowed' : 'pointer',
                   padding: '4px 6px',
                   fontSize: 12,
+                  opacity: user.role !== 'admin' ? 0.5 : 1,
                 }}
               >
                 ×
@@ -928,15 +1157,15 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                 padding: '7px 10px',
                 borderRadius: 6,
                 border: '1px solid var(--border)',
-                background: 'var(--bg-surface)',
-                color: 'var(--text-primary)',
+                background: sourceHandlingMode === 'move_to_system' ? '#fffbeb' : 'var(--bg-surface)',
+                color: sourceHandlingMode === 'move_to_system' ? '#b45309' : 'var(--text-primary)',
                 fontSize: 12,
               }}
               title="Source file handling after upload"
             >
+              <option value="ask_each_time">Ask each time</option>
               <option value="keep_original">Keep originals</option>
               <option value="move_to_system">Move originals to system</option>
-              <option value="ask_each_time">Ask each time</option>
             </select>
             {selectedIds.length > 0 && (
               <>
@@ -948,7 +1177,12 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                 </button>
                 <button
                   onClick={() => handleDelete(selectedIds)}
-                  style={btnStyle('danger', true)}
+                  disabled={user.role !== 'admin'}
+                  style={{
+                    ...btnStyle('danger', true),
+                    opacity: user.role !== 'admin' ? 0.5 : 1,
+                    cursor: user.role !== 'admin' ? 'not-allowed' : 'pointer',
+                  }}
                 >
                   🗑 Delete ({selectedIds.length})
                 </button>
@@ -957,28 +1191,59 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             <button
               onClick={handleUpload}
               disabled={uploadLoading}
-              style={btnStyle('primary', true)}
+              style={{
+                ...btnStyle('primary', true),
+                opacity: uploadLoading ? 0.5 : 1,
+                cursor: uploadLoading ? 'not-allowed' : 'pointer',
+              }}
             >
               {uploadLoading ? '⏳ Uploading…' : '⬆ Upload'}
             </button>
           </div>
         </div>
-        {sourceHandlingMode !== 'keep_original' && (
+        {sourceHandlingMode === 'move_to_system' && (
           <div
             style={{
               padding: '8px 20px',
               borderBottom: '1px solid var(--border)',
-              background: 'rgba(107, 114, 128, 0.08)',
-              color: '#6b7280',
+              background: '#fef3c7',
+              color: '#92400e',
               fontSize: 12,
             }}
           >
             Note: originals are only removed after full per-file success; files are sent to recycle bin/trash by default.
           </div>
         )}
+        {user.role !== 'admin' && (
+          <div
+            style={{
+              padding: '8px 20px',
+              borderBottom: '1px solid var(--border)',
+              background: 'rgba(79, 70, 229, 0.08)',
+              color: '#4f46e5',
+              fontSize: 12,
+            }}
+          >
+            🔒 You have view-only access. Upload, move, rename, and delete operations are restricted to administrators.
+          </div>
+        )}
 
         {/* Table */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: 20 }}>
+        <div
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            padding: 20,
+            position: 'relative',
+            border: isDraggingFiles ? '3px dashed var(--accent)' : 'none',
+            background: isDraggingFiles ? 'rgba(79, 70, 229, 0.05)' : 'transparent',
+            transition: 'all 0.2s ease',
+          }}
+          onDragEnter={handleDragEnter}
+          onDragLeave={handleDragLeave}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+        >
           <div style={{ ...cardStyle(), padding: 0, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
@@ -990,11 +1255,56 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                       onChange={toggleAll}
                     />
                   </th>
-                  <th style={thStyle()}>Name</th>
+                  <th style={thStyle()}>
+                    <button
+                      onClick={() => {
+                        if (sortBy === 'name') {
+                          setSortAsc(!sortAsc);
+                        } else {
+                          setSortBy('name');
+                          setSortAsc(true);
+                        }
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: 'inherit',
+                        padding: 0,
+                        font: 'inherit',
+                      }}
+                      title="Click to sort by name"
+                    >
+                      Name {sortBy === 'name' && (sortAsc ? '↑' : '↓')}
+                    </button>
+                  </th>
                   <th style={thStyle(100)}>Folder</th>
                   <th style={thStyle(90)}>Size</th>
                   <th style={thStyle(60)}>Enc.</th>
-                  <th style={thStyle(130)}>Uploaded</th>
+                  <th style={thStyle(130)}>
+                    <button
+                      onClick={() => {
+                        if (sortBy === 'date') {
+                          setSortAsc(!sortAsc);
+                        } else {
+                          setSortBy('date');
+                          setSortAsc(false);
+                        }
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        cursor: 'pointer',
+                        color: 'inherit',
+                        padding: 0,
+                        font: 'inherit',
+                      }}
+                      title="Click to sort by upload date"
+                    >
+                      Uploaded {sortBy === 'date' && (sortAsc ? '↑' : '↓')}
+                    </button>
+                  </th>
+                  <th style={thStyle(90)}>By</th>
                   <th style={thStyle(120)}>Actions</th>
                 </tr>
               </thead>
@@ -1002,7 +1312,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                 {loading ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}
                     >
                       Loading…
@@ -1011,14 +1321,14 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                 ) : files.items.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}
                     >
                       {search ? 'No files match your search' : 'No files in this folder yet'}
                     </td>
                   </tr>
                 ) : (
-                  files.items.map((f: FileRecord) => (
+                  sortedFiles.map((f: FileRecord) => (
                     <tr
                       key={f.id}
                       style={{
@@ -1073,6 +1383,9 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                       <td style={{ ...tdStyle(130), color: 'var(--text-secondary)', fontSize: 12 }}>
                         {fmtDate(f.created_at)}
                       </td>
+                      <td style={{ ...tdStyle(90), color: 'var(--text-secondary)', fontSize: 12 }}>
+                        {f.uploaded_by ?? 'system'}
+                      </td>
                       <td style={tdStyle(120)}>
                         <div style={{ display: 'flex', gap: 4 }}>
                           <button
@@ -1099,9 +1412,26 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                             📂
                           </button>
                           <button
+                            onClick={() => {
+                              setRenameModal({ fileId: f.id, currentName: f.original_name });
+                              setRenameValue(f.original_name);
+                              setRenameError(null);
+                            }}
+                            style={btnStyle('ghost', true)}
+                            title="Rename"
+                          >
+                            ✏
+                          </button>
+                          <button
                             onClick={() => handleDelete([f.id])}
-                            style={{ ...btnStyle('ghost', true), color: 'var(--danger)' }}
-                            title="Delete"
+                            disabled={user.role !== 'admin'}
+                            title={user.role !== 'admin' ? 'Only admins can delete files' : 'Delete'}
+                            style={{
+                              ...btnStyle('ghost', true),
+                              color: 'var(--danger)',
+                              opacity: user.role !== 'admin' ? 0.5 : 1,
+                              cursor: user.role !== 'admin' ? 'not-allowed' : 'pointer',
+                            }}
                           >
                             🗑
                           </button>
@@ -1226,6 +1556,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             <button
               onClick={() => {
                 setShowUploadPasswordModal(false);
+                setPendingUploadSourcePaths([]);
                 if (uploadPasswordRef.current) uploadPasswordRef.current.value = '';
                 if (uploadPasswordConfirmRef.current) uploadPasswordConfirmRef.current.value = '';
                 setUploadPasswordError(null);
@@ -1405,6 +1736,171 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                 opacity: 0.7,
               }}
             />
+          </div>
+        </OverlayModal>
+      )}
+
+      {/* Rename Modal */}
+      {renameModal && (
+        <OverlayModal>
+          <h3 style={{ marginTop: 0, marginBottom: 12 }}>Rename File</h3>
+          <p style={{ marginTop: 0, marginBottom: 12, color: 'var(--text-secondary)', fontSize: 13 }}>
+            Current name: <strong>{renameModal.currentName}</strong>
+          </p>
+          <input
+            autoFocus
+            type="text"
+            value={renameValue}
+            onChange={(e) => {
+              setRenameValue(e.target.value);
+              setRenameError(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                void handleRename();
+              }
+              if (e.key === 'Escape') {
+                setRenameModal(null);
+                setRenameValue('');
+                setRenameError(null);
+              }
+            }}
+            placeholder="New file name"
+            style={modalInputStyle}
+          />
+          {renameError && (
+            <div style={{ marginTop: 8, color: 'var(--danger)', fontSize: 12 }}>{renameError}</div>
+          )}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 }}>
+            <button
+              onClick={() => {
+                setRenameModal(null);
+                setRenameValue('');
+                setRenameError(null);
+              }}
+              style={btnStyle('secondary', true)}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => void handleRename()}
+              style={btnStyle('primary', true)}
+            >
+              Rename
+            </button>
+          </div>
+        </OverlayModal>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmModal && (
+        <OverlayModal>
+          <h3 style={{ marginTop: 0, marginBottom: 12, color: 'var(--danger)' }}>
+            {deleteConfirmModal.type === 'file' ? '🗑 Delete Files' : '🗑 Delete Folder'}
+          </h3>
+          <p style={{ marginTop: 0, marginBottom: 16, color: 'var(--text-secondary)', fontSize: 13 }}>
+            ⚠️ This will permanently delete the selected {deleteConfirmModal.type === 'file' ? 'file(s)' : 'folder'}. This action cannot be undone.
+          </p>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => setDeleteConfirmModal(null)}
+              style={btnStyle('secondary', true)}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => void (deleteConfirmModal.type === 'file' ? confirmDelete() : confirmDeleteShelf())}
+              style={btnStyle('danger', true)}
+            >
+              Delete
+            </button>
+          </div>
+        </OverlayModal>
+      )}
+
+      {/* Folder Contents Modal */}
+      {folderContentsModal && (
+        <OverlayModal>
+          <h3 style={{ marginTop: 0, marginBottom: 12, color: 'var(--danger)' }}>
+            ⚠️ Folder Contains {folderContentsModal.fileCount} File(s)
+          </h3>
+          <p style={{ marginTop: 0, marginBottom: 16, color: 'var(--text-secondary)', fontSize: 13 }}>
+            The folder <strong>"{folderContentsModal.shelfName}"</strong> contains {folderContentsModal.fileCount} file(s).
+            Create a new folder to move them to:
+          </p>
+
+          {/* Preview of files */}
+          <div
+            style={{
+              background: 'var(--bg-hover)',
+              border: '1px solid var(--border)',
+              borderRadius: 4,
+              padding: 8,
+              marginBottom: 16,
+              maxHeight: 120,
+              overflowY: 'auto',
+              fontSize: 12,
+              color: 'var(--text-secondary)',
+            }}
+          >
+            {folderContentsModal.files.map((file, idx) => (
+              <div key={idx} style={{ padding: '2px 4px' }}>
+                • {file}
+              </div>
+            ))}
+          </div>
+
+          {/* Folder Name Input */}
+          <div style={{ marginBottom: 16 }}>
+            <input
+              autoFocus
+              type="text"
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void handleFolderContentsAction();
+                }
+              }}
+              placeholder="Enter new folder name..."
+              style={{
+                width: '100%',
+                padding: '6px 8px',
+                borderRadius: 4,
+                border: '1px solid var(--border)',
+                background: 'var(--bg)',
+                color: 'var(--text-primary)',
+                fontSize: 13,
+                boxSizing: 'border-box',
+              }}
+            />
+          </div>
+
+          {/* Action Buttons */}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button
+              onClick={() => {
+                setFolderContentsModal(null);
+                setContentsAction(null);
+                setNewFolderName('');
+              }}
+              style={btnStyle('secondary', true)}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => void handleFolderContentsAction()}
+              disabled={!newFolderName.trim()}
+              style={{
+                ...btnStyle('danger', true),
+                opacity: !newFolderName.trim() ? 0.5 : 1,
+                cursor: !newFolderName.trim() ? 'not-allowed' : 'pointer',
+              }}
+            >
+              Delete Folder
+            </button>
           </div>
         </OverlayModal>
       )}

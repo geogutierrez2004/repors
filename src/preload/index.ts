@@ -7,6 +7,7 @@
  * - Only expose channels from the allowlist
  */
 import { contextBridge, ipcRenderer } from 'electron';
+import { webUtils } from 'electron';
 import { ALLOWED_CHANNELS } from '../shared/ipc-channels';
 import { IPC_CHANNELS } from '../shared/ipc-channels';
 import type {
@@ -63,6 +64,9 @@ const api = {
     list: (sessionId: string) =>
       safeInvoke<SafeUser[]>(IPC_CHANNELS.USERS_LIST, { sessionId }),
 
+    create: (sessionId: string, username: string, password: string, role: string) =>
+      safeInvoke<SafeUser>(IPC_CHANNELS.USERS_CREATE, { sessionId, username, password, role }),
+
     update: (sessionId: string, userId: string, updates: { role?: string; is_active?: boolean }) =>
       safeInvoke<SafeUser>(IPC_CHANNELS.USERS_UPDATE, { sessionId, userId, ...updates }),
 
@@ -102,6 +106,18 @@ const api = {
         pageSize: opts.pageSize ?? 25,
       }),
 
+    pickUploadSources: (sessionId: string) =>
+      safeInvoke<{ filePaths: string[] }>(IPC_CHANNELS.FILES_PICK_UPLOAD_SOURCES, { sessionId }),
+
+    getPathForFile: (file: File) => {
+      try {
+        const resolvedPath = webUtils.getPathForFile(file);
+        return resolvedPath || null;
+      } catch {
+        return null;
+      }
+    },
+
     upload: (
       sessionId: string,
       shelfId: string,
@@ -109,6 +125,7 @@ const api = {
       encryptionPassword?: string,
       sourceHandlingMode: SourceHandlingMode = 'keep_original',
       confirmPermanentDelete = false,
+      sourceFilePaths?: string[],
     ) =>
       safeInvoke<FileUploadResult>(IPC_CHANNELS.FILES_UPLOAD, {
         sessionId,
@@ -117,6 +134,7 @@ const api = {
         encryptionPassword,
         sourceHandlingMode,
         confirmPermanentDelete,
+        sourceFilePaths,
       }),
 
     download: (sessionId: string, fileId: string, decryptionPassword?: string) =>
@@ -133,6 +151,9 @@ const api = {
 
     move: (sessionId: string, fileId: string, shelfId: string) =>
       safeInvoke<FileRecord>(IPC_CHANNELS.FILES_MOVE, { sessionId, fileId, shelfId }),
+
+    rename: (sessionId: string, fileId: string, newName: string) =>
+      safeInvoke<FileRecord>(IPC_CHANNELS.FILES_RENAME, { sessionId, fileId, newName }),
   },
 
   shelves: {
@@ -142,8 +163,14 @@ const api = {
     create: (sessionId: string, name: string) =>
       safeInvoke<ShelfRecord>(IPC_CHANNELS.SHELVES_CREATE, { sessionId, name }),
 
-    delete: (sessionId: string, shelfId: string) =>
-      safeInvoke(IPC_CHANNELS.SHELVES_DELETE, { sessionId, shelfId }),
+    delete: (sessionId: string, shelfId: string, opts?: { action?: 'move' | 'temp'; targetShelfId?: string }) =>
+      safeInvoke(IPC_CHANNELS.SHELVES_DELETE, { sessionId, shelfId, ...opts }),
+
+    checkContents: (sessionId: string, shelfId: string) =>
+      safeInvoke<{ fileCount: number; files: string[] }>(IPC_CHANNELS.SHELVES_CHECK_CONTENTS, {
+        sessionId,
+        shelfId,
+      }),
 
     rename: (sessionId: string, shelfId: string, name: string) =>
       safeInvoke<ShelfRecord>(IPC_CHANNELS.SHELVES_RENAME, { sessionId, shelfId, name }),
@@ -176,11 +203,20 @@ const api = {
     setQuota: (sessionId: string, quotaBytes: number) =>
       safeInvoke(IPC_CHANNELS.STORAGE_SET_QUOTA, { sessionId, quotaBytes }),
 
+    getMaxQuota: (sessionId: string) =>
+      safeInvoke<number>(IPC_CHANNELS.STORAGE_GET_MAX_QUOTA, { sessionId }),
+
     backup: (sessionId: string) =>
       safeInvoke<{ path: string }>(IPC_CHANNELS.STORAGE_BACKUP, { sessionId }),
 
     restore: (sessionId: string) =>
       safeInvoke(IPC_CHANNELS.STORAGE_RESTORE, { sessionId }),
+
+    getDriveStatus: (sessionId: string) =>
+      safeInvoke<Array<{ drive: string; usedPercent: number; warningLevel: 'ok' | 'warning' | 'critical' }>>(
+        IPC_CHANNELS.STORAGE_DRIVE_STATUS,
+        { sessionId },
+      ),
   },
 
   sessions: {
