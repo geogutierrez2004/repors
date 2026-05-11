@@ -51,6 +51,7 @@ export interface SafeUser {
   username: string;
   role: Role;
   is_active: boolean;
+  locked_until: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -88,6 +89,10 @@ export interface FileRecord {
   is_encrypted: boolean;
   created_at: string;
   updated_at: string;
+  uploaded_by: string | null;
+  storage_location?: StorageLocation;
+  synced_at?: string | null;
+  sync_error?: string | null;
 }
 
 export type SourceHandlingMode = 'keep_original' | 'move_to_system' | 'ask_each_time';
@@ -154,7 +159,6 @@ export interface DashboardStats {
   active_sessions: number;
   total_files: number;
   total_size_bytes: number;
-  pending_uploads: number;
   failed_uploads_24h: number;
   locked_accounts: number;
   recent_activity: ActivityRecord[];
@@ -166,7 +170,6 @@ export interface SecurityIntegrityStats {
   total_files: number;
   encrypted_files: number;
   unencrypted_files: number;
-  pending_uploads: number;
   failed_uploads_24h: number;
   failed_uploads_7d: number;
   storage_used_bytes: number;
@@ -244,4 +247,51 @@ export interface ResetPasswordRequest {
   sessionId: string;
   userId: string;
   newPassword: string;
+}
+
+// ────────────────────────────────────────
+// Network storage types
+// ────────────────────────────────────────
+
+/** Storage location type. */
+export type StorageLocation = 'local' | 'network';
+
+/** Network storage settings. */
+export interface NetworkSettings {
+  id: string;
+  network_path: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Network storage configuration request. */
+export interface SetNetworkPathRequest {
+  sessionId: string;
+  networkPath: string;
+}
+
+/** Network storage test connection request. */
+export interface TestNetworkConnectionRequest {
+  sessionId: string;
+  networkPath: string;
+}
+
+/** Network storage move file request. */
+export interface MoveFileToNetworkRequest {
+  sessionId: string;
+  fileId: string;
+}
+
+/** Network storage move file to local request. */
+export interface MoveFileToLocalRequest {
+  sessionId: string;
+  fileId: string;
+}
+
+/** File record with storage location information. */
+export interface FileRecordWithLocation extends FileRecord {
+  storage_location: StorageLocation;
+  synced_at: string | null;
+  sync_error: string | null;
 }

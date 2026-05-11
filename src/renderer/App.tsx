@@ -13,12 +13,13 @@ import { FileBrowser } from './pages/FileBrowser';
 import { ActivityLog } from './pages/ActivityLog';
 import { StorageBackup } from './pages/StorageBackup';
 import { SecurityDashboard } from './pages/SecurityDashboard';
+import { UserManagement } from './pages/UserManagement';
 
 // ────────────────────────────────────────
 // Types
 // ────────────────────────────────────────
 
-type Page = 'dashboard' | 'files' | 'activity' | 'storage' | 'security';
+type Page = 'dashboard' | 'files' | 'activity' | 'storage' | 'security' | 'users';
 
 export interface Toast {
   id: string;
@@ -58,6 +59,7 @@ const NAV_ITEMS: Array<{ id: Page; label: string; icon: string }> = [
   { id: 'activity', label: 'Activity Log', icon: '📊' },
   { id: 'storage', label: 'Storage & Backup', icon: '💾' },
   { id: 'security', label: 'Security', icon: '🔒' },
+  { id: 'users', label: 'Users', icon: '👥' },
 ];
 
 // ────────────────────────────────────────
@@ -370,7 +372,10 @@ export function App(): React.JSX.Element {
 
           {/* Nav items */}
           <nav style={{ flex: 1, padding: '0 12px' }}>
-            {NAV_ITEMS.map((item) => {
+            {NAV_ITEMS.filter((item) => {
+              if (item.id === 'users' && user.role !== 'admin') return false;
+              return true;
+            }).map((item) => {
               const active = page === item.id;
               return (
                 <button
@@ -458,6 +463,7 @@ export function App(): React.JSX.Element {
           {page === 'activity' && <ActivityLog {...sharedProps} />}
           {page === 'storage' && <StorageBackup {...sharedProps} />}
           {page === 'security' && <SecurityDashboard {...sharedProps} />}
+          {page === 'users' && <UserManagement {...sharedProps} />}
         </main>
       </div>
 

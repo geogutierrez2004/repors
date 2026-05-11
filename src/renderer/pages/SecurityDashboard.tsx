@@ -9,7 +9,6 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts';
 import {
-  type SessionInfo,
   type SafeUser,
   type SecurityIntegrityStats,
   type SecurityThresholdSettings,
@@ -30,7 +29,7 @@ function fmtTime(ts: number): string {
 }
 
 function fmtDateTime(ts: string): string {
-  return new Date(ts).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
+  return new Date(ts).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' });
 }
 
 function backupFreshness(lastBackupAt: string | null): { label: string; color: string } {
@@ -48,24 +47,13 @@ interface Props {
   addToast: AddToast;
 }
 
-export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Element {
-  const [sessions, setSessions] = useState<SessionInfo[]>([]);
+export function SecurityDashboard({ sessionId, user, addToast }: Props): React.JSX.Element {
   const [integrity, setIntegrity] = useState<SecurityIntegrityStats | null>(null);
   const [thresholds, setThresholds] = useState<SecurityThresholdSettings>(DEFAULT_SECURITY_THRESHOLD_SETTINGS);
   const [settingsDraft, setSettingsDraft] = useState<SecurityThresholdSettings>(DEFAULT_SECURITY_THRESHOLD_SETTINGS);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [passwordLoading, setPasswordLoading] = useState(false);
   const [loading, setLoading] = useState(true);
-
-  const loadSessions = useCallback(async () => {
-    const res = await window.sccfs.sessions.list(sessionId);
-    if (res.ok) setSessions(res.data);
-    else addToast('error', res.error?.message ?? 'Failed to load sessions');
-  }, [sessionId, addToast]);
 
   const loadIntegrity = useCallback(async () => {
     const res = await window.sccfs.dashboard.securityIntegrityStats(sessionId);
@@ -87,17 +75,17 @@ export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Ele
 
   const load = useCallback(async () => {
     setLoading(true);
-    await Promise.all([loadSessions(), loadIntegrity(), loadThresholds()]);
+    await Promise.all([loadIntegrity(), loadThresholds()]);
     setLoading(false);
-  }, [loadSessions, loadIntegrity, loadThresholds]);
+  }, [loadIntegrity, loadThresholds]);
 
   useEffect(() => {
     load();
     const id = setInterval(() => {
-      void Promise.all([loadSessions(), loadIntegrity()]);
+      void Promise.all([loadIntegrity()]);
     }, 20_000);
     return () => clearInterval(id);
-  }, [load, loadSessions, loadIntegrity]);
+  }, [load, loadIntegrity]);
 
   const handleSaveThresholds = async () => {
     if (settingsDraft.storage_warn_percent >= settingsDraft.storage_danger_percent) {
@@ -123,35 +111,6 @@ export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Ele
 
   const handleResetThresholds = () => {
     setSettingsDraft(DEFAULT_SECURITY_THRESHOLD_SETTINGS);
-  };
-
-  const handleTerminate = async (targetId: string, username: string) => {
-    if (!confirm(`Terminate session for "${username}"?`)) return;
-    const res = await window.sccfs.sessions.terminate(sessionId, targetId);
-    if (res.ok) {
-      addToast('success', `Session for "${username}" terminated`);
-      loadSessions();
-    } else {
-      addToast('error', res.error?.message ?? 'Failed');
-    }
-  };
-
-  const handleChangePassword = async () => {
-    if (newPassword !== confirmPassword) {
-      addToast('error', 'New password and confirmation do not match');
-      return;
-    }
-    setPasswordLoading(true);
-    const res = await window.sccfs.auth.changePassword(sessionId, currentPassword, newPassword);
-    setPasswordLoading(false);
-    if (res.ok) {
-      addToast('success', 'Password updated');
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-    } else {
-      addToast('error', res.error?.message ?? 'Failed');
-    }
   };
 
   const now = Date.now();
@@ -218,127 +177,21 @@ export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Ele
               subtitle={integrity?.last_backup_at ? `Last backup: ${fmtDateTime(integrity.last_backup_at)}` : 'Create first backup'}
               tone={backupStatus.color === '#16a34a' ? 'good' : backupStatus.color === '#d97706' ? 'warn' : 'danger'}
             />
-            <MetricCard
-              label="Auth Threat Events"
-              value={integrity ? String(integrity.lockout_events_24h) : '—'}
-              subtitle="ACCOUNT_LOCKED + LOGIN_FAILED (24h)"
-              tone={integrity && integrity.lockout_events_24h === 0 ? 'good' : 'danger'}
-            />
+            {user.role === 'admin' && (
+              <MetricCard
+                label="Auth Threat Events"
+                value={integrity ? String(integrity.lockout_events_24h) : '—'}
+                subtitle="Account locked + login fails (24h)"
+                tone={integrity && integrity.lockout_events_24h === 0 ? 'good' : 'danger'}
+              />
+            )}
           </div>
 
-          {/* Active sessions */}
-          <div style={{ ...cardStyle(), marginBottom: 20, padding: 0, overflow: 'hidden' }}>
-            <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h2 style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>
-                🟢 Access Controls — Active Sessions
-              </h2>
-              <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
-                Auto-refreshes every 15s
-              </span>
-            </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: 'var(--bg-hover)', borderBottom: '1px solid var(--border)' }}>
-                  {['User', 'Started', 'Last Activity', 'Duration', 'Session ID', 'Action'].map((h) => (
-                    <th key={h} style={thStyle()}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {sessions.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} style={{ textAlign: 'center', padding: 24, color: 'var(--text-secondary)' }}>
-                      No active sessions
-                    </td>
-                  </tr>
-                ) : (
-                  sessions.map((s) => {
-                    const isSelf = s.sessionId === sessionId;
-                    return (
-                      <tr key={s.sessionId} style={{ borderBottom: '1px solid var(--border)', background: isSelf ? 'var(--bg-active)' : undefined }}>
-                        <td style={{ ...tdStyle(), fontWeight: 600 }}>
-                          {s.username}
-                          {isSelf && (
-                            <span style={{ fontSize: 10, background: 'var(--accent)', color: '#fff', borderRadius: 10, padding: '1px 6px', marginLeft: 6 }}>
-                              You
-                            </span>
-                          )}
-                        </td>
-                        <td style={{ ...tdStyle(), color: 'var(--text-secondary)', fontSize: 12 }}>
-                          {fmtTime(s.createdAt)}
-                        </td>
-                        <td style={{ ...tdStyle(), color: 'var(--text-secondary)', fontSize: 12 }}>
-                          {fmtTime(s.lastActivity)}
-                        </td>
-                        <td style={{ ...tdStyle(), color: 'var(--text-secondary)', fontSize: 12 }}>
-                          {fmtDuration(now - s.createdAt)}
-                        </td>
-                        <td style={{ ...tdStyle(), fontFamily: 'monospace', fontSize: 11, color: 'var(--text-secondary)' }}>
-                          {s.sessionId.slice(0, 8)}…
-                        </td>
-                        <td style={tdStyle()}>
-                          {!isSelf && (
-                            <button
-                              onClick={() => handleTerminate(s.sessionId, s.username)}
-                              style={{ ...btnStyle('danger', true), fontSize: 11 }}
-                            >
-                              Terminate
-                            </button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Password + lockout activity */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 20 }}>
-            {/* Password change */}
-            <div style={cardStyle()}>
-              <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, color: 'var(--text-primary)' }}>
-                🔑 Access Controls — Change Password
-              </h2>
-              <label style={labelStyle}>Current password</label>
-              <input
-                type="password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                style={inputStyle}
-              />
-              <label style={labelStyle}>New password</label>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                style={inputStyle}
-              />
-              <label style={labelStyle}>Confirm new password</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                style={{ ...inputStyle, marginBottom: 12 }}
-              />
-              <p style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 12 }}>
-                Min 8 characters · uppercase · lowercase · digit · special character
-              </p>
-              <button
-                onClick={handleChangePassword}
-                disabled={passwordLoading}
-                style={btnStyle('primary', true)}
-              >
-                {passwordLoading ? 'Saving…' : 'Update Password'}
-              </button>
-            </div>
-
-            {/* Threshold settings */}
-            <div style={cardStyle()}>
-              <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, color: 'var(--text-primary)' }}>
-                🎚 Security Severity Thresholds
-              </h2>
+          {/* Threshold settings */}
+          <div style={{ ...cardStyle(), marginBottom: 20 }}>
+            <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, color: 'var(--text-primary)' }}>
+              🎚 Security Severity Thresholds
+            </h2>
               {settingsLoading ? (
                 <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>Loading settings...</p>
               ) : (
@@ -394,7 +247,6 @@ export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Ele
                 </>
               )}
             </div>
-          </div>
 
           <div style={{ marginBottom: 20 }}>
             {/* Lockout chart */}
@@ -430,12 +282,12 @@ export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Ele
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-            <div style={cardStyle()}>
-              <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, color: 'var(--text-primary)' }}>
-                Upload Failure Breakdown (7d)
-              </h2>
-              {integrity && integrity.upload_failures_by_reason.length > 0 ? (
+          <div style={{ display: 'grid', gridTemplateColumns: integrity && integrity.upload_failures_by_reason.length > 0 ? '1fr 1fr' : '1fr', gap: 20 }}>
+            {integrity && integrity.upload_failures_by_reason.length > 0 && (
+              <div style={cardStyle()}>
+                <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, color: 'var(--text-primary)' }}>
+                  Upload Failure Breakdown (7d)
+                </h2>
                 <div style={{ display: 'grid', gap: 8 }}>
                   {integrity.upload_failures_by_reason.map((row) => (
                     <div key={row.reason} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
@@ -444,10 +296,8 @@ export function SecurityDashboard({ sessionId, addToast }: Props): React.JSX.Ele
                     </div>
                   ))}
                 </div>
-              ) : (
-                <p style={{ color: 'var(--text-secondary)', fontSize: 13 }}>No failed upload events in the last 7 days.</p>
-              )}
-            </div>
+              </div>
+            )}
 
             <div style={cardStyle()}>
               <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 14, color: 'var(--text-primary)' }}>

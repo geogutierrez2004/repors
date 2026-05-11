@@ -40,4 +40,4 @@ export const STORAGE_CONSTANTS = {
 } as const;
 
 /** System shelf names that cannot be deleted. */
-export const SYSTEM_SHELVES = ['Inbox', 'Archive'] as const;
+export const SYSTEM_SHELVES = [] as const;

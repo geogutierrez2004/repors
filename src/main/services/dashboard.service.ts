@@ -38,6 +38,9 @@ import type {
   SecureTempViewCleanupResult,
 } from '../../shared/types';
 import { normalizeExtension, guessExtensionFromMime } from '../utils/file-extension';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+const execFileAsync = promisify(execFile);
 
 // ────────────────────────────────────────
 // Helpers
@@ -115,6 +118,28 @@ function extractErrorCode(error: unknown): string {
     : '';
 }
 
+/**
+ * Convert SQLite datetime strings to proper ISO format with UTC marker.
+ * SQLite's datetime('now', 'utc') returns "YYYY-MM-DD HH:MM:SS" format (space separator).
+ * Convert to ISO "YYYY-MM-DDTHH:MM:SSZ" so JavaScript treats as UTC.
+ */
+function ensureUTC(dateString: string | null): string {
+  if (!dateString) return new Date().toISOString();
+  // If already has Z or timezone offset, return as-is
+  if (dateString.includes('Z') || dateString.match(/[+-]\d{2}:\d{2}$/)) {
+    return dateString;
+  }
+  // Convert SQLite format "YYYY-MM-DD HH:MM:SS" to ISO "YYYY-MM-DDTHH:MM:SSZ"
+  if (dateString.match(/^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2}/)) {
+    return `${dateString.replace(' ', 'T')}Z`;
+  }
+  // If it looks like ISO format without Z (with T), add it
+  if (dateString.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)) {
+    return `${dateString}Z`;
+  }
+  return dateString;
+}
+
 function countFilesRecursive(dirPath: string): number {
   if (!fs.existsSync(dirPath)) return 0;
   let count = 0;
@@ -149,6 +174,7 @@ export class DashboardService {
 
   constructor(
     private db: Database.Database,
+    private authService: any, // Reference to AuthService for audit logging
     private readonly restoreExecutor?: (request: {
       backupDir: string;
       backupDbPath: string;
@@ -204,17 +230,13 @@ export class DashboardService {
   // ── Dashboard stats ──────────────────
 
   getStats(sessionId: string): DashboardStats {
-    requireAuth(sessionId);
+    const session = requireAuth(sessionId);
 
     const activeSessions = listSessions().length;
 
     const fileRow = this.db
       .prepare('SELECT COUNT(*) as cnt, COALESCE(SUM(size_bytes), 0) as total FROM files')
       .get() as { cnt: number; total: number };
-
-    const pendingRow = this.db
-      .prepare("SELECT COUNT(*) as cnt FROM upload_history WHERE status IN ('pending','in_progress')")
-      .get() as { cnt: number };
 
     const failedRow = this.db
       .prepare("SELECT COUNT(*) as cnt FROM upload_history WHERE status = 'failed' AND started_at >= datetime('now', '-1 day')")
@@ -224,15 +246,26 @@ export class DashboardService {
       .prepare(`SELECT COUNT(*) as cnt FROM users WHERE locked_until IS NOT NULL AND locked_until > ?`)
       .get(Date.now()) as { cnt: number };
 
-    const recentActivity = this.db
-      .prepare(
-        `SELECT a.id, a.user_id, u.username, a.action, a.detail, a.created_at
+    // Staff can only see their own activities in the recent activity feed
+    let recentActivityQuery = `SELECT a.id, a.user_id, u.username, a.action, a.detail, a.created_at
          FROM activity_log a
-         LEFT JOIN users u ON a.user_id = u.id
-         ORDER BY a.created_at DESC
-         LIMIT 15`,
-      )
-      .all() as ActivityRecord[];
+         LEFT JOIN users u ON a.user_id = u.id`;
+    
+    if (session.role === 'staff') {
+      recentActivityQuery += ` WHERE a.user_id = ?`;
+    }
+    
+    recentActivityQuery += ` ORDER BY a.created_at DESC LIMIT 15`;
+    
+    const recentActivity = session.role === 'staff'
+      ? (this.db.prepare(recentActivityQuery).all(session.userId) as ActivityRecord[])
+      : (this.db.prepare(recentActivityQuery).all() as ActivityRecord[]);
+
+    // Ensure all datetime strings are marked as UTC
+    const recentActivityWithUTC = recentActivity.map(a => ({
+      ...a,
+      created_at: ensureUTC(a.created_at),
+    } as ActivityRecord));
 
     // Generate last 7 days with zeros for days without data
     const ops7dRaw = this.db
@@ -276,10 +309,9 @@ export class DashboardService {
       active_sessions: activeSessions,
       total_files: fileRow.cnt,
       total_size_bytes: fileRow.total,
-      pending_uploads: pendingRow.cnt,
       failed_uploads_24h: failedRow.cnt,
       locked_accounts: lockedRow.cnt,
-      recent_activity: recentActivity,
+      recent_activity: recentActivityWithUTC,
       file_ops_7d,
     };
   }
@@ -306,9 +338,6 @@ export class DashboardService {
       : 0;
 
     const pendingUploads = this.db
-      .prepare("SELECT COUNT(*) as cnt FROM upload_history WHERE status IN ('pending','in_progress')")
-      .get() as { cnt: number };
-
     const failedUploads24h = this.db
       .prepare("SELECT COUNT(*) as cnt FROM upload_history WHERE status = 'failed' AND started_at >= datetime('now', '-1 day')")
       .get() as { cnt: number };
@@ -367,17 +396,19 @@ export class DashboardService {
       total_files: fileSecurity.total,
       encrypted_files: fileSecurity.encrypted ?? 0,
       unencrypted_files: fileSecurity.unencrypted ?? 0,
-      pending_uploads: pendingUploads.cnt,
       failed_uploads_24h: failedUploads24h.cnt,
       failed_uploads_7d: failedUploads7d.cnt,
       storage_used_bytes: fileSecurity.used_bytes,
       storage_quota_bytes: quotaBytes,
       storage_used_percent: storageUsedPercent,
       lockout_events_24h: lockoutEvents24h,
-      last_backup_at: backupRow.last_backup_at,
+      last_backup_at: ensureUTC(backupRow.last_backup_at),
       upload_failures_by_reason: failureReasons,
       threat_activity_by_hour: threatActivityByHour,
-      critical_events: criticalEvents,
+      critical_events: criticalEvents.map(e => ({
+        ...e,
+        created_at: ensureUTC(e.created_at),
+      } as ActivityRecord)),
     };
   }
 
@@ -453,16 +484,29 @@ export class DashboardService {
         `SELECT f.id, f.original_name, f.stored_name, f.mime_type, f.size_bytes, f.sha256,
                 f.original_extension,
                 f.shelf_id, s.name as shelf_name,
-                f.is_encrypted, f.created_at, f.updated_at
+                f.is_encrypted, f.created_at, f.updated_at,
+                f.storage_location, f.synced_at, f.sync_error,
+                COALESCE(u.username, 'system') as uploaded_by
          FROM files f
          JOIN shelves s ON f.shelf_id = s.id
+         LEFT JOIN upload_history uh ON f.id = uh.file_id AND uh.status = 'completed'
+         LEFT JOIN users u ON uh.user_id = u.id
          ${where}
          ORDER BY f.created_at DESC
          LIMIT ? OFFSET ?`,
       )
       .all(...params, opts.pageSize, offset) as FileRecord[];
 
-    return { items, total, page: opts.page, pageSize: opts.pageSize };
+    return {
+      items: items.map(f => ({
+        ...f,
+        created_at: ensureUTC(f.created_at),
+        updated_at: ensureUTC(f.updated_at),
+      } as FileRecord)),
+      total,
+      page: opts.page,
+      pageSize: opts.pageSize,
+    };
   }
 
   async uploadFile(
@@ -473,6 +517,7 @@ export class DashboardService {
     sourceHandlingMode: SourceHandlingMode,
     confirmPermanentDelete: boolean,
     win: BrowserWindow,
+    sourceFilePaths?: string[],
   ): Promise<FileUploadResult> {
     const session = requireAuth(sessionId);
 
@@ -489,15 +534,9 @@ export class DashboardService {
       .prepare('SELECT COALESCE(SUM(size_bytes), 0) as total FROM files')
       .get() as { total: number };
 
-    const { filePaths, canceled } = await dialog.showOpenDialog(win, {
-      title: 'Select File to Upload',
-      properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'All Files', extensions: ['*'] }],
-    });
-
-    if (canceled || filePaths.length === 0) {
-      throw new AuthError('CANCELLED', 'Upload cancelled');
-    }
+    const filePaths = sourceFilePaths && sourceFilePaths.length > 0
+      ? sourceFilePaths
+      : (await this.pickUploadSources(sessionId, win)).filePaths;
 
     const filesDir = getFilesDir();
     const resultItems: FileUploadItemResult[] = [];
@@ -550,6 +589,7 @@ export class DashboardService {
 
         let storedName: string;
         let payloadId: string;
+        let storageLocation: 'local' | 'network' = 'local';
         let encryptionMeta:
           | {
               salt: string;
@@ -566,11 +606,11 @@ export class DashboardService {
             .prepare(
               `SELECT id, stored_name
                FROM file_payloads
-               WHERE sha256 = ? AND size_bytes = ? AND is_encrypted = 0
+               WHERE sha256 = ? AND size_bytes = ? AND is_encrypted = 0 AND storage_location = ?
                ORDER BY created_at ASC
                LIMIT 1`,
             )
-            .get(sha256, stat.size) as { id: string; stored_name: string } | undefined;
+            .get(sha256, stat.size, storageLocation) as { id: string; stored_name: string } | undefined;
 
           if (existingPayload && fs.existsSync(path.join(filesDir, existingPayload.stored_name))) {
             storedName = existingPayload.stored_name;
@@ -579,7 +619,8 @@ export class DashboardService {
           } else {
             storedName = `${uuidv4()}${ext}`;
             payloadId = uuidv4();
-            await copyStream(filePath, path.join(filesDir, storedName));
+            const destPath = path.join(filesDir, storedName);
+            await copyStream(filePath, destPath);
             payloadWrittenToDisk = true;
           }
         } else {
@@ -590,6 +631,7 @@ export class DashboardService {
           const iv = crypto.randomBytes(GCM_IV_BYTES);
           const key = this.deriveFileKey(normalizedEncryptionPassword as string, salt, iterations);
           const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+          
           const finalPath = path.join(filesDir, storedName);
           const tempPath = makeTempPartPath(finalPath);
 
@@ -619,21 +661,21 @@ export class DashboardService {
         const persistTransaction = this.db.transaction(() => {
           if (reusedPayload) {
             this.db
-              .prepare("UPDATE file_payloads SET ref_count = ref_count + 1, updated_at = datetime('now') WHERE id = ?")
+              .prepare("UPDATE file_payloads SET ref_count = ref_count + 1, updated_at = datetime('now', 'utc') WHERE id = ?")
               .run(payloadId);
           } else {
             this.db
               .prepare(
-                `INSERT INTO file_payloads (id, stored_name, sha256, size_bytes, is_encrypted, ref_count)
-                 VALUES (?, ?, ?, ?, ?, 1)`,
+                `INSERT INTO file_payloads (id, stored_name, sha256, size_bytes, is_encrypted, storage_location, ref_count)
+                 VALUES (?, ?, ?, ?, ?, ?, 1)`,
               )
-              .run(payloadId, storedName, sha256, stat.size, encrypt ? 1 : 0);
+              .run(payloadId, storedName, sha256, stat.size, encrypt ? 1 : 0, storageLocation);
           }
 
           this.db
             .prepare(
-              `INSERT INTO files (id, original_name, original_extension, stored_name, mime_type, size_bytes, sha256, shelf_id, uploaded_by, is_encrypted, payload_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              `INSERT INTO files (id, original_name, original_extension, stored_name, mime_type, size_bytes, sha256, shelf_id, uploaded_by, is_encrypted, payload_id, storage_location, synced_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'utc'))`,
             )
             .run(
               fileId,
@@ -647,6 +689,7 @@ export class DashboardService {
               ANONYMOUS_UPLOAD_USER_ID,
               encrypt ? 1 : 0,
               payloadId,
+              storageLocation,
             );
 
           if (encrypt && encryptionMeta) {
@@ -661,7 +704,7 @@ export class DashboardService {
           this.db
             .prepare(
               `INSERT INTO upload_history (id, file_id, user_id, status, completed_at)
-               VALUES (?, ?, ?, 'completed', datetime('now'))`,
+               VALUES (?, ?, ?, 'completed', datetime('now', 'utc'))`,
             )
             .run(uuidv4(), fileId, session.userId);
         });
@@ -693,6 +736,14 @@ export class DashboardService {
           encrypt ? `Uploaded encrypted ${sourceName}` : `Uploaded ${sourceName}`,
         );
 
+        // Audit log: Record file upload with user accountability
+        this.authService.logAudit(session.userId, 'FILE_UPLOAD', sourceName, {
+          fileId,
+          size_bytes: stat.size,
+          shelf_id: shelfId,
+          encrypted: encrypt,
+        });
+
         item.success = true;
         item.file = this.getFileRecord(fileId);
         usedRow.total += stat.size;
@@ -714,6 +765,21 @@ export class DashboardService {
     }
 
     return { files: resultItems };
+  }
+
+  async pickUploadSources(sessionId: string, win: BrowserWindow): Promise<{ filePaths: string[] }> {
+    requireAuth(sessionId);
+    const { filePaths, canceled } = await dialog.showOpenDialog(win, {
+      title: 'Select File to Upload',
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'All Files', extensions: ['*'] }],
+    });
+
+    if (canceled || filePaths.length === 0) {
+      throw new AuthError('CANCELLED', 'Upload cancelled');
+    }
+
+    return { filePaths };
   }
 
   async downloadFile(
@@ -755,7 +821,8 @@ export class DashboardService {
       .prepare('INSERT INTO downloads (id, file_id, user_id) VALUES (?, ?, ?)')
       .run(uuidv4(), fileId, session.userId);
 
-    this.logActivity(null, 'FILE_DOWNLOAD', `Downloaded ${fileRow.original_name}`);
+    // Audit log: Record file download with user accountability
+    this.authService.logAudit(session.userId, 'FILE_DOWNLOAD', fileRow.original_name);
   }
 
   async viewEncryptedFile(
@@ -763,7 +830,7 @@ export class DashboardService {
     fileId: string,
     decryptionPassword: string,
   ): Promise<SecureTempViewResult> {
-    requireAuth(sessionId);
+    const session = requireAuth(sessionId);
 
     const fileRow = this.db
       .prepare('SELECT * FROM files WHERE id = ?')
@@ -797,7 +864,10 @@ export class DashboardService {
     const contentBase64 = fs.readFileSync(tempFilePath).toString('base64');
     this.secureViewTempById.set(viewId, { tempDir, tempFilePath });
     this.scheduleSecureTempViewCleanup(viewId, tempDir);
-    this.logActivity(null, 'FILE_VIEW', `Viewed encrypted ${fileRow.original_name}`);
+
+    // Audit log: Record secure view access with user accountability
+    this.authService.logAudit(session.userId, 'FILE_VIEW', fileRow.original_name);
+
     return {
       viewId,
       fileName: this.resolveDownloadFileName(fileRow),
@@ -829,7 +899,12 @@ export class DashboardService {
   }
 
   deleteFile(sessionId: string, fileId: string): void {
-    requireAuth(sessionId);
+    const session = requireAuth(sessionId);
+
+    // Only admins can delete files
+    if (session.role === 'staff') {
+      throw new AuthError('PERMISSION_DENIED', 'Staff cannot delete files');
+    }
 
     const fileRow = this.db
       .prepare('SELECT * FROM files WHERE id = ?')
@@ -855,7 +930,7 @@ export class DashboardService {
             payloadToDeletePath = path.join(getFilesDir(), payload.stored_name);
           } else {
             this.db
-              .prepare("UPDATE file_payloads SET ref_count = ref_count - 1, updated_at = datetime('now') WHERE id = ?")
+              .prepare("UPDATE file_payloads SET ref_count = ref_count - 1, updated_at = datetime('now', 'utc') WHERE id = ?")
               .run(payload.id);
           }
         }
@@ -869,14 +944,19 @@ export class DashboardService {
       fs.unlinkSync(payloadToDeletePath);
     }
 
-    this.logActivity(null, 'FILE_DELETE', `Deleted ${fileRow.original_name}`);
+    // Audit log: Record file deletion with user accountability
+    this.authService.logAudit(session.userId, 'FILE_DELETE', fileRow.original_name, {
+      fileId,
+      size_bytes: fileRow.size_bytes,
+      shelf_id: fileRow.shelf_id,
+    });
   }
 
   moveFile(sessionId: string, fileId: string, targetShelfId: string): FileRecord {
-    requireAuth(sessionId);
+    const session = requireAuth(sessionId);
 
-    const fileRow = this.db.prepare('SELECT id, original_name FROM files WHERE id = ?').get(fileId) as
-      | { id: string; original_name: string }
+    const fileRow = this.db.prepare('SELECT id, original_name, shelf_id, size_bytes FROM files WHERE id = ?').get(fileId) as
+      | { id: string; original_name: string; shelf_id: string; size_bytes: number }
       | undefined;
     if (!fileRow) throw new AuthError('NOT_FOUND', 'File not found');
 
@@ -884,10 +964,43 @@ export class DashboardService {
     if (!shelf) throw new AuthError('NOT_FOUND', 'Target shelf not found');
 
     this.db
-      .prepare("UPDATE files SET shelf_id = ?, updated_at = datetime('now') WHERE id = ?")
+      .prepare("UPDATE files SET shelf_id = ?, updated_at = datetime('now', 'utc') WHERE id = ?")
       .run(targetShelfId, fileId);
 
-    this.logActivity(null, 'FILE_MOVE', `Moved ${fileRow.original_name} to new shelf`);
+    // Audit log: Record file move with user accountability
+    this.authService.logAudit(session.userId, 'FILE_MOVE', fileRow.original_name, {
+      fileId,
+      from_shelf_id: fileRow.shelf_id,
+      to_shelf_id: targetShelfId,
+    });
+
+    return this.getFileRecord(fileId);
+  }
+
+  renameFile(sessionId: string, fileId: string, newName: string): FileRecord {
+    const session = requireAuth(sessionId);
+
+    const fileRow = this.db.prepare('SELECT id, original_name, shelf_id FROM files WHERE id = ?').get(fileId) as
+      | { id: string; original_name: string; shelf_id: string }
+      | undefined;
+    if (!fileRow) throw new AuthError('NOT_FOUND', 'File not found');
+
+    const normalizedNewName = newName.trim();
+    if (!normalizedNewName) {
+      throw new AuthError('INVALID_NAME', 'File name cannot be empty');
+    }
+
+    this.db
+      .prepare("UPDATE files SET original_name = ?, updated_at = datetime('now', 'utc') WHERE id = ?")
+      .run(normalizedNewName, fileId);
+
+    // Audit log: Record file rename with user accountability
+    this.authService.logAudit(session.userId, 'FILE_RENAME', fileRow.original_name, {
+      fileId,
+      new_name: normalizedNewName,
+      shelf_id: fileRow.shelf_id,
+    });
+
     return this.getFileRecord(fileId);
   }
 
@@ -896,7 +1009,7 @@ export class DashboardService {
   listShelves(sessionId: string): ShelfRecord[] {
     requireAuth(sessionId);
 
-    return this.db
+    const shelves = this.db
       .prepare(
         `SELECT s.id, s.name, s.is_system, s.created_by, s.created_at, s.updated_at,
                 COUNT(f.id) as file_count,
@@ -907,9 +1020,15 @@ export class DashboardService {
          ORDER BY s.is_system DESC, s.name`,
       )
       .all() as ShelfRecord[];
+
+    return shelves.map(s => ({
+      ...s,
+      created_at: ensureUTC(s.created_at),
+      updated_at: ensureUTC(s.updated_at),
+    } as ShelfRecord));
   }
 
-  createShelf(sessionId: string, name: string): ShelfRecord {
+  async createShelf(sessionId: string, name: string): Promise<ShelfRecord> {
     const session = requireAuth(sessionId);
 
     const existing = this.db.prepare('SELECT id FROM shelves WHERE name = ? COLLATE NOCASE').get(name);
@@ -923,12 +1042,24 @@ export class DashboardService {
       .prepare('INSERT INTO shelves (id, name, is_system, created_by) VALUES (?, ?, 0, ?)')
       .run(id, name, session.userId);
 
+    // Create network folder if network storage is configured
+    await this.syncShelvesToNetwork();
+
     this.logActivity(session.userId, 'SHELF_CREATE', `Created shelf "${name}"`);
     return this.getShelfRecord(id);
   }
 
-  deleteShelf(sessionId: string, shelfId: string): void {
+  deleteShelf(
+    sessionId: string,
+    shelfId: string,
+    opts?: { action?: 'move' | 'temp'; targetShelfId?: string },
+  ): void {
     const session = requireAuth(sessionId);
+
+    // Only admins can delete shelves
+    if (session.role === 'staff') {
+      throw new AuthError('PERMISSION_DENIED', 'Staff cannot delete folders');
+    }
 
     const shelf = this.db.prepare('SELECT * FROM shelves WHERE id = ?').get(shelfId) as
       | { id: string; name: string; is_system: number }
@@ -936,19 +1067,58 @@ export class DashboardService {
     if (!shelf) throw new AuthError('NOT_FOUND', 'Shelf not found');
     if (shelf.is_system) throw new AuthError('SYSTEM_SHELF', 'System shelves cannot be deleted');
 
-    // Move files to Inbox
-    const inbox = this.db.prepare('SELECT id FROM shelves WHERE name = ?').get('Inbox') as
-      | { id: string }
-      | undefined;
-    if (inbox) {
-      this.db.prepare("UPDATE files SET shelf_id = ?, updated_at = datetime('now') WHERE shelf_id = ?").run(inbox.id, shelfId);
+    const files = this.db
+      .prepare('SELECT COUNT(*) as cnt FROM files WHERE shelf_id = ?')
+      .get(shelfId) as { cnt: number };
+
+    let targetShelfId: string | undefined;
+
+    if (files.cnt > 0) {
+      if (opts?.action === 'move' && opts?.targetShelfId) {
+        // Move files to specified folder
+        targetShelfId = opts.targetShelfId;
+        const targetShelf = this.db.prepare('SELECT id FROM shelves WHERE id = ?').get(targetShelfId);
+        if (!targetShelf) {
+          throw new AuthError('NOT_FOUND', 'Target shelf not found');
+        }
+        this.db
+          .prepare("UPDATE files SET shelf_id = ?, updated_at = datetime('now', 'utc') WHERE shelf_id = ?")
+          .run(targetShelfId, shelfId);
+        this.logActivity(
+          session.userId,
+          'SHELF_DELETE',
+          `Deleted shelf "${shelf.name}" and moved ${files.cnt} file(s) to target folder`,
+        );
+      } else if (opts?.action === 'temp') {
+        // Create temporary folder with timestamp
+        const tempFolderName = `${shelf.name} (archived ${new Date().toISOString().split('T')[0]})`;
+        const tempId = uuidv4();
+        this.db
+          .prepare(
+            "INSERT INTO shelves (id, name, is_system, created_at, updated_at) VALUES (?, ?, 0, datetime('now', 'utc'), datetime('now', 'utc'))",
+          )
+          .run(tempId, tempFolderName);
+        this.db
+          .prepare("UPDATE files SET shelf_id = ?, updated_at = datetime('now', 'utc') WHERE shelf_id = ?")
+          .run(tempId, shelfId);
+        this.logActivity(
+          session.userId,
+          'SHELF_DELETE',
+          `Deleted shelf "${shelf.name}" and archived ${files.cnt} file(s) to "${tempFolderName}"`,
+        );
+      } else {
+        // No action specified but there are files - shouldn't happen if frontend validates
+        throw new AuthError('INVALID_REQUEST', 'Must specify action for shelf with contents');
+      }
+    } else {
+      // No files, just delete
+      this.logActivity(session.userId, 'SHELF_DELETE', `Deleted shelf "${shelf.name}"`);
     }
 
     this.db.prepare('DELETE FROM shelves WHERE id = ?').run(shelfId);
-    this.logActivity(session.userId, 'SHELF_DELETE', `Deleted shelf "${shelf.name}"`);
   }
 
-  renameShelf(sessionId: string, shelfId: string, name: string): ShelfRecord {
+  async renameShelf(sessionId: string, shelfId: string, name: string): Promise<ShelfRecord> {
     const session = requireAuth(sessionId);
 
     const shelf = this.db.prepare('SELECT * FROM shelves WHERE id = ?').get(shelfId) as
@@ -963,11 +1133,32 @@ export class DashboardService {
     if (existing) throw new AuthError('SHELF_EXISTS', 'A shelf with that name already exists');
 
     this.db
-      .prepare("UPDATE shelves SET name = ?, updated_at = datetime('now') WHERE id = ?")
+      .prepare("UPDATE shelves SET name = ?, updated_at = datetime('now', 'utc') WHERE id = ?")
       .run(name, shelfId);
+
+    // Sync network folders if network storage is configured
+    await this.syncShelvesToNetwork();
 
     this.logActivity(session.userId, 'SHELF_RENAME', `Renamed shelf "${shelf.name}" to "${name}"`);
     return this.getShelfRecord(shelfId);
+  }
+
+  getShelfContents(sessionId: string, shelfId: string): { fileCount: number; files: string[] } {
+    requireAuth(sessionId);
+
+    const shelf = this.db.prepare('SELECT * FROM shelves WHERE id = ?').get(shelfId) as
+      | { id: string; name: string }
+      | undefined;
+    if (!shelf) throw new AuthError('NOT_FOUND', 'Shelf not found');
+
+    const files = this.db
+      .prepare('SELECT id, original_name FROM files WHERE shelf_id = ? ORDER BY created_at DESC')
+      .all(shelfId) as Array<{ id: string; original_name: string }>;
+
+    return {
+      fileCount: files.length,
+      files: files.map((f) => f.original_name),
+    };
   }
 
   // ── Activity log ─────────────────────
@@ -983,10 +1174,16 @@ export class DashboardService {
       pageSize: number;
     },
   ): PaginatedResult<ActivityRecord> {
-    requireAuth(sessionId);
+    const session = requireAuth(sessionId);
 
     let where = 'WHERE 1=1';
     const params: unknown[] = [];
+
+    // Staff can only see their own activities
+    if (session.role === 'staff') {
+      where += ' AND a.user_id = ?';
+      params.push(session.userId);
+    }
 
     if (opts.userId) {
       where += ' AND a.user_id = ?';
@@ -1019,7 +1216,15 @@ export class DashboardService {
       )
       .all(...params, opts.pageSize, offset) as ActivityRecord[];
 
-    return { items, total, page: opts.page, pageSize: opts.pageSize };
+    return {
+      items: items.map(a => ({
+        ...a,
+        created_at: ensureUTC(a.created_at),
+      } as ActivityRecord)),
+      total,
+      page: opts.page,
+      pageSize: opts.pageSize,
+    };
   }
 
   // ── Storage stats ─────────────────────
@@ -1068,12 +1273,191 @@ export class DashboardService {
     };
   }
 
+  getMaxQuotaAllowed(sessionId: string): number {
+    requireAuth(sessionId);
+
+    try {
+      const stat = fs.statfsSync(getFilesDir(), { bigint: true });
+      const availableBytes = stat.bavail * stat.bsize;
+      const maxQuotaAllowed = (availableBytes * BigInt(90)) / 100n;
+      return Number(maxQuotaAllowed);
+    } catch (e) {
+      throw new AuthError('MAX_QUOTA_FAILED', 'Failed to determine maximum quota');
+    }
+  }
+
   setQuota(sessionId: string, quotaBytes: number): void {
     requireAuth(sessionId);
 
-    this.db
-      .prepare("INSERT OR REPLACE INTO storage_config (key, value) VALUES ('quota_bytes', ?)")
-      .run(String(quotaBytes));
+    try {
+      // Get actual free space - quota can be set to any value UP TO 90% of available
+      const stat = fs.statfsSync(getFilesDir(), { bigint: true });
+      const availableBytes = stat.bavail * stat.bsize;
+      const maxQuotaAllowed = (availableBytes * BigInt(90)) / 100n;
+
+      if (quotaBytes > Number(maxQuotaAllowed)) {
+        throw new AuthError(
+          'QUOTA_EXCEEDS_AVAILABLE',
+          `Quota cannot exceed ${Math.round(Number(maxQuotaAllowed) / 1e9)} GB (90% of available space)`
+        );
+      }
+
+      if (quotaBytes <= 0) {
+        throw new AuthError('INVALID_QUOTA', 'Quota must be greater than 0');
+      }
+
+      this.db
+        .prepare("INSERT OR REPLACE INTO storage_config (key, value) VALUES ('quota_bytes', ?)")
+        .run(String(quotaBytes));
+    } catch (e) {
+      if (e instanceof AuthError) throw e;
+      throw new AuthError('QUOTA_SET_FAILED', 'Failed to set quota');
+    }
+  }
+
+  // ── System drive status ──────────────
+  getStoragePath(sessionId: string): { path: string } {
+    requireAuth(sessionId);
+    const filesDir = getFilesDir();
+    return { path: filesDir };
+  }
+
+  async createShare(sessionId: string): Promise<{ shareName: string; uncPath: string }> {
+    requireAuth(sessionId);
+    if (process.platform !== 'win32') throw new AuthError('NOT_SUPPORTED', 'Share creation is only supported on Windows');
+    const filesDir = getFilesDir();
+    const shareName = 'sccfs';
+
+    // PowerShell command to create SMB share if it does not exist
+    const ps = `if (-not (Get-SmbShare -Name '${shareName}' -ErrorAction SilentlyContinue)) { New-SmbShare -Name '${shareName}' -Path '${filesDir.replace(/'/g, "''")}' -FullAccess Everyone } else { Write-Output 'EXISTS' }`;
+    try {
+      const { stdout, stderr } = await execFileAsync('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+      if (stderr && stderr.trim()) {
+        throw new Error(stderr.trim());
+      }
+      const hostname = require('os').hostname();
+      const unc = `\\\\${hostname}\\${shareName}`;
+      return { shareName, uncPath: unc };
+    } catch (e) {
+      throw new AuthError('SHARE_CREATE_FAILED', `Failed to create share: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  async removeShare(sessionId: string): Promise<{ removed: boolean }> {
+    requireAuth(sessionId);
+    if (process.platform !== 'win32') throw new AuthError('NOT_SUPPORTED', 'Share removal is only supported on Windows');
+    const shareName = 'sccfs';
+    const ps = `if (Get-SmbShare -Name '${shareName}' -ErrorAction SilentlyContinue) { Remove-SmbShare -Name '${shareName}' -Force } else { Write-Output 'MISSING' }`;
+    try {
+      const { stdout, stderr } = await execFileAsync('powershell', ['-NoProfile', '-NonInteractive', '-Command', ps]);
+      if (stderr && stderr.trim()) {
+        throw new Error(stderr.trim());
+      }
+      return { removed: true };
+    } catch (e) {
+      throw new AuthError('SHARE_REMOVE_FAILED', `Failed to remove share: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  async openStorageFolder(sessionId: string): Promise<{ opened: boolean }> {
+    requireAuth(sessionId);
+    const filesDir = getFilesDir();
+    try {
+      await shell.openPath(filesDir);
+      return { opened: true };
+    } catch (e) {
+      throw new AuthError('OPEN_FOLDER_FAILED', 'Failed to open storage folder');
+    }
+  }
+
+
+  getSystemStorageStatus(sessionId: string): Array<{
+    drive: string;
+    usedPercent: number;
+    warningLevel: 'ok' | 'warning' | 'critical';
+  }> {
+    requireAuth(sessionId);
+
+    const WARN_THRESHOLD = 75;
+    const CRITICAL_THRESHOLD = 90;
+    const osDrive = process.env['SCCFS_OS_DRIVE'] || 
+      (process.platform === 'win32' ? 'C:' : '/');
+
+    const driveStatuses: Array<{
+      drive: string;
+      usedPercent: number;
+      warningLevel: 'ok' | 'warning' | 'critical';
+    }> = [];
+
+    try {
+      if (process.platform === 'win32') {
+        // Windows: check all drive letters A-Z
+        for (let charCode = 65; charCode <= 90; charCode++) {
+          const drive = String.fromCharCode(charCode) + ':';
+          const drivePath = drive + '\\';
+          
+          // Skip OS drive
+          if (drive.toUpperCase() === osDrive.toUpperCase().replace(/\\$/, '')) continue;
+          
+          try {
+            // Check if drive exists first
+            if (!fs.existsSync(drivePath)) continue;
+            
+            const stat = fs.statfsSync(drivePath);
+            const total = Number(stat.blocks) * Number(stat.bsize);
+            const available = Number(stat.bavail) * Number(stat.bsize);
+            
+            if (total <= 0) continue;
+            
+            const used = total - available;
+            const usedPercent = (used / total) * 100;
+
+            if (usedPercent >= CRITICAL_THRESHOLD) {
+              driveStatuses.push({ drive, usedPercent: Math.round(usedPercent), warningLevel: 'critical' });
+            } else if (usedPercent >= WARN_THRESHOLD) {
+              driveStatuses.push({ drive, usedPercent: Math.round(usedPercent), warningLevel: 'warning' });
+            }
+          } catch (e) {
+            // Drive not available or not readable, silently skip
+          }
+        }
+      } else {
+        // Linux/macOS: check root and common mount points
+        const mountPoints = [
+          '/',
+          '/home',
+          '/mnt',
+          '/media',
+          '/Volumes',
+        ].filter((mp) => mp !== osDrive && fs.existsSync(mp));
+
+        for (const mountPoint of mountPoints) {
+          try {
+            const stat = fs.statfsSync(mountPoint);
+            const total = Number(stat.blocks) * Number(stat.bsize);
+            const available = Number(stat.bavail) * Number(stat.bsize);
+            
+            if (total <= 0) continue;
+            
+            const used = total - available;
+            const usedPercent = (used / total) * 100;
+
+            if (usedPercent >= CRITICAL_THRESHOLD) {
+              driveStatuses.push({ drive: mountPoint, usedPercent: Math.round(usedPercent), warningLevel: 'critical' });
+            } else if (usedPercent >= WARN_THRESHOLD) {
+              driveStatuses.push({ drive: mountPoint, usedPercent: Math.round(usedPercent), warningLevel: 'warning' });
+            }
+          } catch (e) {
+            // Mount point not accessible, silently skip
+          }
+        }
+      }
+    } catch (e) {
+      // Outer try catch for platform detection issues
+      // Silently return whatever drives we found so far
+    }
+
+    return driveStatuses;
   }
 
   // ── Backup / restore ─────────────────
@@ -1133,6 +1517,15 @@ export class DashboardService {
         },
       };
       fs.writeFileSync(backupMetaPath, JSON.stringify(meta, null, 2), 'utf-8');
+
+      this.logActivity(session.userId, 'STORAGE_BACKUP', `Backup created at ${path.basename(backupDir)}`);
+
+      // Audit log: Record backup creation with user accountability
+      this.authService.logAudit(session.userId, 'BACKUP_CREATE', path.basename(backupDir), {
+        backup_path: backupDir,
+        file_count: totals.file_count,
+        total_bytes: totals.total_bytes,
+      });
     } catch (e) {
       if (!backupDirExisted && fs.existsSync(backupDir)) {
         fs.rmSync(backupDir, { recursive: true, force: true });
@@ -1140,7 +1533,6 @@ export class DashboardService {
       throw e;
     }
 
-    this.logActivity(session.userId, 'STORAGE_BACKUP', `Backup created at ${path.basename(backupDir)}`);
     return { path: backupDir };
   }
 
@@ -1200,6 +1592,11 @@ export class DashboardService {
   /** Log a successful restore operation in the activity log. */
   logStorageRestoreActivity(userId: string, backupDirName: string): void {
     this.logActivity(userId, 'STORAGE_RESTORE', `Backup restored from ${backupDirName}`);
+
+    // Audit log: Record backup restore with user accountability
+    this.authService.logAudit(userId, 'BACKUP_RESTORE', backupDirName, {
+      restored_at: new Date().toISOString(),
+    });
   }
 
   // ── Sessions (security dashboard) ────
@@ -1245,7 +1642,7 @@ export class DashboardService {
   // ── Private helpers ──────────────────
 
   private getFileRecord(fileId: string): FileRecord {
-    return this.db
+    const record = this.db
       .prepare(
         `SELECT f.id, f.original_name, f.original_extension, f.stored_name, f.mime_type, f.size_bytes, f.sha256,
                 f.shelf_id, s.name as shelf_name,
@@ -1255,6 +1652,12 @@ export class DashboardService {
          WHERE f.id = ?`,
       )
       .get(fileId) as FileRecord;
+    
+    return {
+      ...record,
+      created_at: ensureUTC(record.created_at),
+      updated_at: ensureUTC(record.updated_at),
+    } as FileRecord;
   }
 
   private normalizeSecurityThresholdSettings(
@@ -1299,7 +1702,7 @@ export class DashboardService {
   }
 
   private getShelfRecord(shelfId: string): ShelfRecord {
-    return this.db
+    const record = this.db
       .prepare(
         `SELECT s.id, s.name, s.is_system, s.created_by, s.created_at, s.updated_at,
                 COUNT(f.id) as file_count,
@@ -1310,6 +1713,12 @@ export class DashboardService {
          GROUP BY s.id`,
       )
       .get(shelfId) as ShelfRecord;
+    
+    return {
+      ...record,
+      created_at: ensureUTC(record.created_at),
+      updated_at: ensureUTC(record.updated_at),
+    } as ShelfRecord;
   }
 
   private logActivity(userId: string | null, action: string, detail: string): void {
@@ -1580,4 +1989,299 @@ export class DashboardService {
 
     return extension ? `${safeOriginalName}${extension}` : safeOriginalName;
   }
+
+  // ── Network storage ──────────────────
+
+  async getNetworkSettings(sessionId: string): Promise<{ enabled: boolean; networkPath: string | null } | null> {
+    requireAuth(sessionId);
+
+    const settings = this.db
+      .prepare('SELECT id, network_path, enabled FROM network_settings ORDER BY created_at DESC LIMIT 1')
+      .get() as { id: string; network_path: string; enabled: number } | undefined;
+
+    if (!settings) {
+      return { enabled: false, networkPath: null };
+    }
+
+    return {
+      enabled: Boolean(settings.enabled),
+      networkPath: settings.network_path,
+    };
+  }
+
+  async setNetworkPath(sessionId: string, networkPath: string): Promise<{ enabled: boolean; networkPath: string }> {
+    const session = requireAuth(sessionId);
+
+    // Validate UNC path format (\\server\share)
+    if (!networkPath.match(/^\\\\[^\\]+\\[^\\]+/)) {
+      throw new AuthError('INVALID_PATH', 'Network path must be in UNC format (\\\\server\\share)');
+    }
+
+    // Check if network path is accessible
+    try {
+      fs.accessSync(networkPath);
+    } catch {
+      throw new AuthError('PATH_NOT_ACCESSIBLE', 'Network path is not accessible');
+    }
+
+    const existing = this.db
+      .prepare('SELECT id FROM network_settings')
+      .get() as { id: string } | undefined;
+
+    if (existing) {
+      this.db
+        .prepare('UPDATE network_settings SET network_path = ?, enabled = 1, updated_at = datetime("now", "utc") WHERE id = ?')
+        .run(networkPath, existing.id);
+    } else {
+      this.db
+        .prepare('INSERT INTO network_settings (id, network_path, enabled) VALUES (?, ?, 1)')
+        .run(uuidv4(), networkPath);
+    }
+
+    // Create the folder structure immediately on the network
+    await this.syncShelvesToNetwork();
+
+    this.logActivity(session.userId, 'NETWORK_PATH_SET', `Network path set to ${networkPath}`);
+
+    return {
+      enabled: true,
+      networkPath,
+    };
+  }
+
+  async testNetworkConnection(sessionId: string, networkPath: string): Promise<{ connected: boolean; error?: string }> {
+    requireAuth(sessionId);
+
+    // Validate UNC path format
+    if (!networkPath.match(/^\\\\[^\\]+\\[^\\]+/)) {
+      return {
+        connected: false,
+        error: 'Network path must be in UNC format (\\\\server\\share)',
+      };
+    }
+
+    try {
+      // Normalize path - remove trailing slashes
+      const normalizedPath = networkPath.replace(/\\+$/, '');
+      
+      // Try to access the network path
+      fs.accessSync(normalizedPath);
+      
+      // Create subdirectory structure to test write access
+      // For UNC paths, use proper concatenation instead of path.join
+      const testDir = `${normalizedPath}\\files`;
+      fs.mkdirSync(testDir, { recursive: true });
+      
+      // Try to create a test file to ensure write access
+      const testPath = `${testDir}\\.sccfs-test`;
+      fs.writeFileSync(testPath, 'test');
+      fs.unlinkSync(testPath);
+
+      return { connected: true };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Unknown error';
+      return {
+        connected: false,
+        error: message,
+      };
+    }
+  }
+
+  async moveFileToNetwork(sessionId: string, fileId: string): Promise<any> {
+    const session = requireAuth(sessionId);
+
+    // Get network settings
+    const settings = await this.getNetworkSettings(sessionId);
+    if (!settings || !settings.enabled || !settings.networkPath) {
+      throw new AuthError('NETWORK_NOT_CONFIGURED', 'Network storage is not configured');
+    }
+
+    // Get the file record
+    const file = this.db
+      .prepare(
+        `SELECT f.id, f.original_name, f.stored_name, f.payload_id, f.storage_location
+         FROM files f
+         WHERE f.id = ?`,
+      )
+      .get(fileId) as any;
+
+    if (!file) {
+      throw new AuthError('FILE_NOT_FOUND', 'File not found');
+    }
+
+    if (file.storage_location === 'network') {
+      throw new AuthError('ALREADY_NETWORK', 'File is already on network storage');
+    }
+
+    // Get the payload information
+    const payload = this.db
+      .prepare('SELECT id, stored_name, size_bytes FROM file_payloads WHERE id = ?')
+      .get(file.payload_id) as any;
+
+    if (!payload) {
+      throw new AuthError('PAYLOAD_NOT_FOUND', 'File payload not found');
+    }
+
+    const localPath = path.join(getFilesDir(), payload.stored_name);
+    const networkDir = path.join(settings.networkPath, 'network', 'sccfs', 'files');
+    fs.mkdirSync(networkDir, { recursive: true });
+    const networkPath = path.join(networkDir, payload.stored_name);
+
+    // Copy file to network
+    await copyStream(localPath, networkPath);
+
+    // Update database
+    this.db.prepare('UPDATE files SET storage_location = ?, synced_at = datetime("now", "utc"), sync_error = NULL WHERE id = ?')
+      .run('network', fileId);
+    this.db.prepare('UPDATE file_payloads SET storage_location = ? WHERE id = ?')
+      .run('network', file.payload_id);
+
+    // Delete local copy
+    try {
+      fs.unlinkSync(localPath);
+    } catch {
+      // Log but don't fail if local deletion fails
+    }
+
+    this.logActivity(session.userId, 'FILE_MOVED_TO_NETWORK', `File ${file.original_name} moved to network storage`);
+
+    return this.getFileRecord(fileId);
+  }
+
+  async moveFileToLocal(sessionId: string, fileId: string): Promise<any> {
+    const session = requireAuth(sessionId);
+
+    // Get the file record
+    const file = this.db
+      .prepare(
+        `SELECT f.id, f.original_name, f.stored_name, f.payload_id, f.storage_location
+         FROM files f
+         WHERE f.id = ?`,
+      )
+      .get(fileId) as any;
+
+    if (!file) {
+      throw new AuthError('FILE_NOT_FOUND', 'File not found');
+    }
+
+    if (file.storage_location === 'local') {
+      throw new AuthError('ALREADY_LOCAL', 'File is already in local storage');
+    }
+
+    // Get network settings
+    const settings = await this.getNetworkSettings(sessionId);
+    if (!settings || !settings.networkPath) {
+      throw new AuthError('NETWORK_NOT_CONFIGURED', 'Network storage is not configured');
+    }
+
+    // Get the payload information
+    const payload = this.db
+      .prepare('SELECT id, stored_name, size_bytes FROM file_payloads WHERE id = ?')
+      .get(file.payload_id) as any;
+
+    if (!payload) {
+      throw new AuthError('PAYLOAD_NOT_FOUND', 'File payload not found');
+    }
+
+    const networkDir = path.join(settings.networkPath, 'network', 'sccfs', 'files');
+    const networkPath = path.join(networkDir, payload.stored_name);
+    const localPath = path.join(getFilesDir(), payload.stored_name);
+
+    // Copy file from network to local
+    if (fs.existsSync(networkPath)) {
+      await copyStream(networkPath, localPath);
+    } else {
+      throw new AuthError('NETWORK_FILE_NOT_FOUND', 'File not found on network storage');
+    }
+
+    // Update database
+    this.db.prepare('UPDATE files SET storage_location = ?, synced_at = datetime("now", "utc"), sync_error = NULL WHERE id = ?')
+      .run('local', fileId);
+    this.db.prepare('UPDATE file_payloads SET storage_location = ? WHERE id = ?')
+      .run('local', file.payload_id);
+
+    this.logActivity(session.userId, 'FILE_MOVED_TO_LOCAL', `File ${file.original_name} moved to local storage`);
+
+    return this.getFileRecord(fileId);
+  }
+
+  // ── Helper methods for network storage ──────────────────
+
+  /**
+   * Get network settings without requiring a session (for internal use).
+   */
+  private getNetworkSettingsInternal(): { enabled: boolean; networkPath: string } | null {
+    const settings = this.db
+      .prepare('SELECT id, network_path, enabled FROM network_settings ORDER BY created_at DESC LIMIT 1')
+      .get() as { id: string; network_path: string; enabled: number } | undefined;
+
+    if (!settings || !settings.enabled) {
+      return null;
+    }
+
+    return {
+      enabled: true,
+      networkPath: settings.network_path,
+    };
+  }
+
+  /**
+   * Get the storage location (path) for a file based on network settings.
+   * If network storage is enabled, returns the network path.
+   * Otherwise returns the local path.
+   */
+  private getFileStoragePath(fileName: string, shelfId?: string): string {
+    const networkSettings = this.getNetworkSettingsInternal();
+
+    if (networkSettings) {
+      // Get shelf name for path structure
+      const shelf = shelfId
+        ? (this.db.prepare('SELECT name FROM shelves WHERE id = ?').get(shelfId) as { name: string } | undefined)
+        : null;
+
+      const shelfPath = shelf ? `shelves/${shelf.name}` : 'unsorted';
+      return path.join(networkSettings.networkPath, 'network', 'sccfs', shelfPath, fileName);
+    }
+
+    // Default to local storage
+    return path.join(getFilesDir(), fileName);
+  }
+
+  /**
+   * Synchronize all shelves to the network storage directory structure.
+   * Creates corresponding folders under network/sccfs/shelves/
+   */
+  async syncShelvesToNetwork(): Promise<void> {
+    const networkSettings = this.getNetworkSettingsInternal();
+    if (!networkSettings) {
+      return; // Network not configured
+    }
+
+    try {
+      // Create base directories directly under the network path
+      // For UNC paths, use proper string concatenation instead of path.join
+      const normalizedPath = networkSettings.networkPath.replace(/\\+$/, '');
+      const filesDir = `${normalizedPath}\\files`;
+      const shelvesDir = `${normalizedPath}\\shelves`;
+      const unsortedDir = `${normalizedPath}\\unsorted`;
+
+      fs.mkdirSync(filesDir, { recursive: true });
+      fs.mkdirSync(shelvesDir, { recursive: true });
+      fs.mkdirSync(unsortedDir, { recursive: true });
+
+      // Create shelf directories
+      const shelves = this.db
+        .prepare('SELECT id, name FROM shelves WHERE is_system = 0')
+        .all() as Array<{ id: string; name: string }>;
+
+      for (const shelf of shelves) {
+        const shelfDir = `${shelvesDir}\\${shelf.name}`;
+        fs.mkdirSync(shelfDir, { recursive: true });
+      }
+    } catch (e) {
+      console.error('[NetworkSync] Error syncing shelves:', e);
+      throw e;
+    }
+  }
 }
+

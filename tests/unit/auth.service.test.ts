@@ -286,17 +286,17 @@ describe('AuthService', () => {
       }
     });
 
-    it('should reject deleting users', async () => {
+    it('should reject deleting admin users', async () => {
       await auth.seedDefaultAdmin('fs_adm1', 'admin123');
       const { sessionId } = await auth.login('fs_adm1', 'admin123');
       const currentUser = auth.getCurrentUser(sessionId);
       try {
         auth.deleteUser(sessionId, currentUser!.id);
-        expect.fail('Expected SINGLE_USER_ONLY error');
+        expect.fail('Expected PROTECTED_ADMIN error');
       } catch (error) {
         expect(error).toBeInstanceOf(AuthError);
-        expect((error as AuthError).code).toBe('SINGLE_USER_ONLY');
-        expect((error as AuthError).message).toMatch(/one static user account only/i);
+        expect((error as AuthError).code).toBe('PROTECTED_ADMIN');
+        expect((error as AuthError).message).toMatch(/cannot delete admin accounts/i);
       }
     });
 

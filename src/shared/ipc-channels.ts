@@ -27,17 +27,20 @@ export const IPC_CHANNELS = {
 
   // File management
   FILES_LIST: 'sccfs:files:list',
+  FILES_PICK_UPLOAD_SOURCES: 'sccfs:files:pick-upload-sources',
   FILES_UPLOAD: 'sccfs:files:upload',
   FILES_DOWNLOAD: 'sccfs:files:download',
   FILES_VIEW_ENCRYPTED: 'sccfs:files:view-encrypted',
   FILES_VIEW_ENCRYPTED_CLEANUP: 'sccfs:files:view-encrypted-cleanup',
   FILES_DELETE: 'sccfs:files:delete',
   FILES_MOVE: 'sccfs:files:move',
+  FILES_RENAME: 'sccfs:files:rename',
 
   // Shelf management
   SHELVES_LIST: 'sccfs:shelves:list',
   SHELVES_CREATE: 'sccfs:shelves:create',
   SHELVES_DELETE: 'sccfs:shelves:delete',
+  SHELVES_CHECK_CONTENTS: 'sccfs:shelves:check-contents',
   SHELVES_RENAME: 'sccfs:shelves:rename',
 
   // Activity log
@@ -46,13 +49,28 @@ export const IPC_CHANNELS = {
   // Storage & backup
   STORAGE_STATS: 'sccfs:storage:stats',
   STORAGE_SET_QUOTA: 'sccfs:storage:set-quota',
+  STORAGE_GET_MAX_QUOTA: 'sccfs:storage:get-max-quota',
   STORAGE_BACKUP: 'sccfs:storage:backup',
   STORAGE_RESTORE: 'sccfs:storage:restore',
+  STORAGE_DRIVE_STATUS: 'sccfs:storage:drive-status',
+    STORAGE_GET_PATH: 'sccfs:storage:get-path',
   APP_RESTORED: 'sccfs:app:restored',
 
   // Session management (security dashboard)
   SESSIONS_LIST: 'sccfs:sessions:list',
   SESSIONS_TERMINATE: 'sccfs:sessions:terminate',
+
+  // Network storage
+  NETWORK_GET_SETTINGS: 'sccfs:network:get-settings',
+  NETWORK_SET_PATH: 'sccfs:network:set-path',
+  NETWORK_TEST_CONNECTION: 'sccfs:network:test-connection',
+  NETWORK_GET_HOST_IP: 'sccfs:network:get-host-ip',
+  NETWORK_MOVE_FILE_TO_NETWORK: 'sccfs:network:move-file-to-network',
+  NETWORK_MOVE_FILE_TO_LOCAL: 'sccfs:network:move-file-to-local',
+  // Local share management
+  STORAGE_CREATE_SHARE: 'sccfs:storage:create-share',
+  STORAGE_REMOVE_SHARE: 'sccfs:storage:remove-share',
+  STORAGE_OPEN_FOLDER: 'sccfs:storage:open-folder',
 } as const;
 
 /** All allowed IPC channel names (for allowlist enforcement). */

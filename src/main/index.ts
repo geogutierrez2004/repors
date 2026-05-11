@@ -85,6 +85,11 @@ async function bootstrap(): Promise<void> {
           seedServices: async (nextServices) => {
             await nextServices.authService.seedDefaultAdmin(DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD);
             nextServices.dashboardService.seedSystemShelves();
+            try {
+              await nextServices.dashboardService.syncShelvesToNetwork();
+            } catch (e) {
+              console.warn('[Restore] Warning: Could not sync shelves to network storage:', e);
+            }
           },
           logRestoreActivity: (nextServices) => {
             nextServices.dashboardService.logStorageRestoreActivity(
@@ -114,6 +119,13 @@ async function bootstrap(): Promise<void> {
 
   // Seed system shelves and default storage quota
   services.dashboardService.seedSystemShelves();
+
+  // Sync shelves to network storage if configured (best-effort)
+  try {
+    await services.dashboardService.syncShelvesToNetwork();
+  } catch (e) {
+    console.warn('[Bootstrap] Warning: Could not sync shelves to network storage:', e);
+  }
 
   // Register all IPC handlers
   registerHandlers(services, { guard: withRestoreGuard });

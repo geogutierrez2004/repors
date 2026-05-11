@@ -119,6 +119,7 @@ export const FileUploadSchema = z.object({
   encryptionPassword: z.string().min(1).max(1024).optional(),
   sourceHandlingMode: z.enum(['keep_original', 'move_to_system', 'ask_each_time']).default('keep_original'),
   confirmPermanentDelete: z.boolean().default(false),
+  sourceFilePaths: z.array(z.string().min(1)).optional(),
 }).superRefine((value, ctx) => {
   if (value.encrypt && !value.encryptionPassword?.trim()) {
     ctx.addIssue({
@@ -127,6 +128,10 @@ export const FileUploadSchema = z.object({
       message: 'Encryption password is required when encrypting upload',
     });
   }
+});
+
+export const FilePickUploadSourcesSchema = z.object({
+  sessionId: z.string().uuid(),
 });
 
 export const FileDownloadSchema = z.object({
@@ -151,6 +156,12 @@ export const FileDeleteSchema = z.object({
   fileId: z.string().uuid(),
 });
 
+export const FileRenameSchema = z.object({
+  sessionId: z.string().uuid(),
+  fileId: z.string().uuid(),
+  newName: z.string().min(1).max(255),
+});
+
 export const FileMoveSchema = z.object({
   sessionId: z.string().uuid(),
   fileId: z.string().uuid(),
@@ -163,6 +174,13 @@ export const ShelfCreateSchema = z.object({
 });
 
 export const ShelfDeleteSchema = z.object({
+  sessionId: z.string().uuid(),
+  shelfId: z.string().uuid(),
+  action: z.enum(['move', 'temp']).optional(),
+  targetShelfId: z.string().uuid().optional(),
+});
+
+export const ShelfCheckContentsSchema = z.object({
   sessionId: z.string().uuid(),
   shelfId: z.string().uuid(),
 });
@@ -191,4 +209,32 @@ export const StorageSetQuotaSchema = z.object({
 export const SessionTerminateSchema = z.object({
   sessionId: z.string().uuid(),
   targetSessionId: z.string().uuid(),
+});
+
+// ────────────────────────────────────────
+// Network storage validators
+// ────────────────────────────────────────
+
+export const SetNetworkPathSchema = z.object({
+  sessionId: z.string().uuid('Invalid session ID'),
+  networkPath: z.string().min(1, 'Network path is required').max(500),
+});
+
+export const TestNetworkConnectionSchema = z.object({
+  sessionId: z.string().uuid('Invalid session ID'),
+  networkPath: z.string().min(1, 'Network path is required').max(500),
+});
+
+export const GetNetworkSettingsSchema = z.object({
+  sessionId: z.string().uuid('Invalid session ID'),
+});
+
+export const MoveFileToNetworkSchema = z.object({
+  sessionId: z.string().uuid('Invalid session ID'),
+  fileId: z.string().uuid('Invalid file ID'),
+});
+
+export const MoveFileToLocalSchema = z.object({
+  sessionId: z.string().uuid('Invalid session ID'),
+  fileId: z.string().uuid('Invalid file ID'),
 });

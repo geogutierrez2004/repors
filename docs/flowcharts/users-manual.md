@@ -4,6 +4,9 @@
 1. Launch the application.
 2. Sign in with your assigned account credentials.
 3. After login, use the left navigation to open Dashboard, File Browser, Activity Log, Security, or Storage & Backup.
+4. **Admin vs Staff Access**: 
+   - Admins can upload, download, rename, move, and delete files and folders. They also see all activity logs and have access to user management and security settings.
+   - Staff users have view-only access to files and can download files, but cannot upload, rename, move, or delete files and folders. They see only their own activity in the recent activity feed.
 
 ## 2. File Browser
 ### 2.1 Browse and Filter Files
@@ -13,9 +16,11 @@
 
 ### 2.2 Upload Files
 1. Select a folder.
-2. Click Upload.
-3. Enter and confirm the encryption password when prompted.
-4. Wait for upload completion and review success/error toasts.
+2. Click Upload or drag and drop files into the file browser area.
+3. If uploading multiple files, review the batch summary modal showing all files to be uploaded.
+4. Enter and confirm the encryption password when prompted.
+5. Wait for upload completion and review success/error toasts.
+**Note:** Only admins can upload files. Staff users have view-only access.
 
 ### 2.3 Download Files
 1. Click Download for the target file.
@@ -28,16 +33,39 @@
 3. Use in-modal controls for PDF page navigation and link preview.
 4. Note shown in viewer: preview may differ from downloaded original file format.
 
-### 2.5 Move or Delete Files
+### 2.5 Manage Files (Rename, Move, Delete)
 1. Select one or more files.
-2. Use Move to choose destination folder.
-3. Use Delete to remove selected files.
+2. Use the action buttons in the file row:
+   - **Rename**: Click the ✏ button to rename the selected file.
+   - **Move**: Click the 📂 button to move the file to a different folder.
+   - **Delete**: Click the 🗑 button to delete the file (admin only).
+3. For folder deletion: right-click or use the × button on the folder.
+   - If the folder is empty, it deletes immediately.
+   - If the folder contains files, you will be prompted to create a new folder and choose to move the files there.
+4. After operations, the file list updates automatically.
+
+**Note:** File rename, move, and delete operations require admin privileges. Staff users can view files but cannot modify them.
+
+## 2.6 File Table Information
+The file browser displays the following columns:
+- **Name**: Original filename
+- **Size**: File size in human-readable format
+- **Enc.**: Encryption status (✓ = encrypted, — = plain)
+- **Uploaded**: Date and time the file was uploaded
+- **By**: Username of the person who uploaded the file (or "system" for files uploaded before user attribution was enabled)
+- **Actions**: Buttons for preview, move, rename, and delete operations
 
 ## 3. Activity Log
 1. Open Activity Log.
 2. Filter by action and date range.
-3. Export CSV to download complete activity history.
-4. Use Print for paper/PDF reporting.
+3. The activity log displays:
+   - **Timestamp**: When the action occurred
+   - **User**: Username of the person who performed the action
+   - **Action**: Type of operation (e.g., File Upload, File Delete, Folder Create)
+   - **Detail**: Human-readable description of what was done
+4. Export CSV to download complete activity history (includes usernames).
+5. Use Print for paper/PDF reporting.
+6. The activity heatmap shows event frequency across days and 4-hour time buckets.
 
 ## 4. Security Dashboard
 ### 4.1 Integrity Metrics

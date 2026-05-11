@@ -11,6 +11,7 @@ import type { AuthService } from '../services/auth.service';
 import type { DashboardService } from '../services/dashboard.service';
 import { registerAuthHandlers } from './auth.handler';
 import { registerDashboardHandlers } from './dashboard.handler';
+import { registerNetworkStorageHandlers } from './network-storage.handler';
 
 /** Wrapper for IPC invocations (e.g., lock/guard behavior during restore). */
 export type IpcInvokeGuard = <T>(invoke: () => Promise<IpcResponse<T>>) => Promise<IpcResponse<T>>;
@@ -27,24 +28,37 @@ const HANDLER_CHANNELS: readonly string[] = [
   IPC_CHANNELS.USERS_RESET_PASSWORD,
   IPC_CHANNELS.USERS_UNLOCK,
   IPC_CHANNELS.DASHBOARD_STATS,
+  IPC_CHANNELS.SECURITY_INTEGRITY_STATS,
+  IPC_CHANNELS.SECURITY_THRESHOLD_GET,
+  IPC_CHANNELS.SECURITY_THRESHOLD_SET,
   IPC_CHANNELS.FILES_LIST,
+  IPC_CHANNELS.FILES_PICK_UPLOAD_SOURCES,
   IPC_CHANNELS.FILES_UPLOAD,
   IPC_CHANNELS.FILES_DOWNLOAD,
   IPC_CHANNELS.FILES_VIEW_ENCRYPTED,
   IPC_CHANNELS.FILES_VIEW_ENCRYPTED_CLEANUP,
   IPC_CHANNELS.FILES_DELETE,
   IPC_CHANNELS.FILES_MOVE,
+  IPC_CHANNELS.FILES_RENAME,
   IPC_CHANNELS.SHELVES_LIST,
   IPC_CHANNELS.SHELVES_CREATE,
   IPC_CHANNELS.SHELVES_DELETE,
+  IPC_CHANNELS.SHELVES_CHECK_CONTENTS,
   IPC_CHANNELS.SHELVES_RENAME,
   IPC_CHANNELS.ACTIVITY_LIST,
   IPC_CHANNELS.STORAGE_STATS,
   IPC_CHANNELS.STORAGE_SET_QUOTA,
+  IPC_CHANNELS.STORAGE_GET_MAX_QUOTA,
   IPC_CHANNELS.STORAGE_BACKUP,
   IPC_CHANNELS.STORAGE_RESTORE,
+  IPC_CHANNELS.STORAGE_DRIVE_STATUS,
   IPC_CHANNELS.SESSIONS_LIST,
   IPC_CHANNELS.SESSIONS_TERMINATE,
+  IPC_CHANNELS.NETWORK_GET_SETTINGS,
+  IPC_CHANNELS.NETWORK_SET_PATH,
+  IPC_CHANNELS.NETWORK_TEST_CONNECTION,
+  IPC_CHANNELS.NETWORK_MOVE_FILE_TO_NETWORK,
+  IPC_CHANNELS.NETWORK_MOVE_FILE_TO_LOCAL,
 ];
 
 let cleanupCurrent: (() => void) | null = null;
@@ -64,10 +78,12 @@ export function registerHandlers(services: {
 
   const unregisterAuth = registerAuthHandlers(services.authService, options?.guard);
   const unregisterDashboard = registerDashboardHandlers(services.dashboardService, options?.guard);
+  const unregisterNetworkStorage = registerNetworkStorageHandlers(services.dashboardService, options?.guard);
 
   cleanupCurrent = () => {
     unregisterAuth();
     unregisterDashboard();
+    unregisterNetworkStorage();
   };
 }
 

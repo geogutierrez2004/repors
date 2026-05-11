@@ -35,102 +35,23 @@ const ACTION_COLORS: Record<string, string> = {
   CREATE_USER: '#15803d', DELETE_USER: '#dc2626', UPDATE_USER: '#d97706',
 };
 
-function fmtDateTime(ts: string): string {
-  return new Date(ts).toLocaleString([], { dateStyle: 'short', timeStyle: 'medium' });
+function formatActionName(action: string): string {
+  return action
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
+    .replace(/Shelf/g, 'Folder');
 }
 
-// ────────────────────────────────────────
-// Activity heatmap (hour × day-of-week)
-// ────────────────────────────────────────
-
-function ActivityHeatmap({ items }: { items: ActivityRecord[] }) {
-  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  const HOURS = Array.from({ length: 24 }, (_, i) => i);
-
-  // Build count matrix [day][hour]
-  const matrix = Array.from({ length: 7 }, () => new Array<number>(24).fill(0));
-  let max = 0;
-
-  for (const item of items) {
-    const d = new Date(item.created_at);
-    const day = d.getDay();
-    const hour = d.getHours();
-    matrix[day][hour]++;
-    if (matrix[day][hour] > max) max = matrix[day][hour];
-  }
-
-  const cellColor = (count: number): string => {
-    if (count === 0) return 'var(--bg-hover)';
-    const intensity = Math.max(0.15, count / Math.max(max, 1));
-    const r = Math.round(79 + (20 - 79) * intensity);
-    const g = Math.round(70 + (39 - 70) * intensity);
-    const b = Math.round(229 + (205 - 229) * intensity);
-    return `rgba(${r},${g},${b},${intensity})`;
-  };
-
-  return (
-    <div style={{ overflowX: 'auto' }}>
-      <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-        <div style={{ width: 32 }} />
-        {HOURS.map((h) => (
-          <div
-            key={h}
-            style={{
-              width: 18,
-              fontSize: 9,
-              textAlign: 'center',
-              color: 'var(--text-secondary)',
-            }}
-          >
-            {h % 4 === 0 ? h : ''}
-          </div>
-        ))}
-      </div>
-      {DAYS.map((day, di) => (
-        <div key={day} style={{ display: 'flex', gap: 4, marginBottom: 4, alignItems: 'center' }}>
-          <div
-            style={{
-              width: 32,
-              fontSize: 10,
-              color: 'var(--text-secondary)',
-              textAlign: 'right',
-              paddingRight: 4,
-            }}
-          >
-            {day}
-          </div>
-          {HOURS.map((h) => (
-            <div
-              key={h}
-              title={`${day} ${h}:00 — ${matrix[di][h]} events`}
-              style={{
-                width: 18,
-                height: 18,
-                borderRadius: 3,
-                background: cellColor(matrix[di][h]),
-                border: '1px solid var(--border)',
-              }}
-            />
-          ))}
-        </div>
-      ))}
-      <div
-        style={{ fontSize: 10, color: 'var(--text-secondary)', marginTop: 4, textAlign: 'right' }}
-      >
-        ← less · more →&nbsp;
-        <span
-          style={{
-            display: 'inline-block',
-            width: 40,
-            height: 8,
-            background: 'linear-gradient(to right, var(--bg-hover), #4f46e5)',
-            borderRadius: 2,
-            verticalAlign: 'middle',
-          }}
-        />
-      </div>
-    </div>
-  );
+function fmtDateTime(ts: string): string {
+  const date = new Date(ts);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  const seconds = String(date.getSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
 // ────────────────────────────────────────
@@ -138,10 +59,11 @@ function ActivityHeatmap({ items }: { items: ActivityRecord[] }) {
 // ────────────────────────────────────────
 
 function exportCsv(items: ActivityRecord[]) {
-  const header = 'Timestamp,Action,Detail';
+  const header = 'Timestamp,User,Action,Detail';
   const rows = items.map((a) =>
     [
       `"${a.created_at}"`,
+      `"${(a.username ?? '—').replace(/"/g, '""')}"`,
       `"${a.action}"`,
       `"${(a.detail ?? '').replace(/"/g, '""')}"`,
     ].join(','),
@@ -191,7 +113,6 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
   const [result, setResult] = useState<PaginatedResult<ActivityRecord>>({
     items: [], total: 0, page: 1, pageSize: PAGE_SIZE,
   });
-  const [allItems, setAllItems] = useState<ActivityRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [page, setPage] = useState(1);
@@ -213,26 +134,16 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
     setLoading(false);
   }, [sessionId, filterAction, filterDateFrom, filterDateTo, page, addToast]);
 
-  // Load all items (for heatmap) — unfiltered, large batch
-  const loadAll = useCallback(async () => {
-    const res = await window.sccfs.activity.list(sessionId, { page: 1, pageSize: 100 });
-    if (res.ok) setAllItems(res.data.items);
-  }, [sessionId]);
-
   useEffect(() => {
     load();
   }, [load]);
 
+  // Auto-apply filters when they change
   useEffect(() => {
-    loadAll();
-  }, [loadAll]);
+    setPage(1);
+  }, [filterAction, filterDateFrom, filterDateTo]);
 
   const totalPages = Math.max(1, Math.ceil(result.total / PAGE_SIZE));
-
-  const applyFilters = () => {
-    setPage(1);
-    load();
-  };
 
   const clearFilters = () => {
     setFilterAction('');
@@ -303,7 +214,7 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
           >
             <option value="">All Actions</option>
             {ACTIONS.map((a) => (
-              <option key={a} value={a}>{a}</option>
+              <option key={a} value={a}>{formatActionName(a)}</option>
             ))}
           </select>
         </div>
@@ -326,9 +237,6 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
           />
         </div>
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
-          <button onClick={applyFilters} style={btnStyle('primary', true)}>
-            Apply
-          </button>
           <button onClick={clearFilters} style={btnStyle('secondary', true)}>
             Clear
           </button>
@@ -339,14 +247,14 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
       </div>
 
       {/* Two-column: table + heatmap */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 20 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 20 }}>
         {/* Table */}
         <div>
           <div style={{ ...cardStyle(), padding: 0, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: 'var(--bg-hover)', borderBottom: '1px solid var(--border)' }}>
-                  {['Timestamp', 'Action', 'Detail'].map((h) => (
+                  {['Timestamp', 'User', 'Action', 'Detail'].map((h) => (
                     <th key={h} style={thStyle()}>{h}</th>
                   ))}
                 </tr>
@@ -354,13 +262,13 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={3} style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}>
+                    <td colSpan={4} style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}>
                       Loading…
                     </td>
                   </tr>
                 ) : result.items.length === 0 ? (
                   <tr>
-                    <td colSpan={3} style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}>
+                    <td colSpan={4} style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}>
                       No activity records found
                     </td>
                   </tr>
@@ -369,6 +277,9 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
                     <tr key={a.id} style={{ borderBottom: '1px solid var(--border)' }}>
                       <td style={{ ...tdStyle(), color: 'var(--text-secondary)', whiteSpace: 'nowrap', fontSize: 12 }}>
                         {fmtDateTime(a.created_at)}
+                      </td>
+                      <td style={{ ...tdStyle(), color: 'var(--text-secondary)', fontSize: 12, fontWeight: 500 }}>
+                        {a.username ?? '—'}
                       </td>
                       <td style={tdStyle()}>
                         <span
@@ -382,7 +293,7 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
                             whiteSpace: 'nowrap',
                           }}
                         >
-                          {a.action}
+                          {formatActionName(a.action)}
                         </span>
                       </td>
                       <td style={{ ...tdStyle(), color: 'var(--text-secondary)', maxWidth: 360 }}>
@@ -427,17 +338,6 @@ export function ActivityLog({ sessionId, user, addToast }: Props): React.JSX.Ele
               </button>
             </div>
           )}
-        </div>
-
-        {/* Heatmap */}
-        <div
-          className="no-print"
-          style={{ ...cardStyle(), minWidth: 520 }}
-        >
-          <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 14, color: 'var(--text-primary)' }}>
-            Activity Heatmap (recent 100 events)
-          </h3>
-          <ActivityHeatmap items={allItems} />
         </div>
       </div>
     </div>

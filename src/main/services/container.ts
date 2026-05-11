@@ -18,8 +18,9 @@ export function createServices(
     }) => Promise<void>;
   },
 ): MainServices {
+  const authService = new AuthService(db);
   return {
-    authService: new AuthService(db),
-    dashboardService: new DashboardService(db, options?.restoreExecutor),
+    authService,
+    dashboardService: new DashboardService(db, authService, options?.restoreExecutor),
   };
 }

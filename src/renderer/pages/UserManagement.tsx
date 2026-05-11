@@ -22,7 +22,7 @@ interface Props {
 // ────────────────────────────────────────
 
 interface UserModalState {
-  mode: 'reset-password' | 'change-password';
+  mode: 'create-user' | 'reset-password' | 'change-password';
   userId?: string;
   username?: string;
 }
@@ -40,8 +40,11 @@ function UserModal({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [currentPassword, setCurrentPassword] = useState('');
+  const [currentPasswordConfirm, setCurrentPasswordConfirm] = useState('');
+  const [role, setRole] = useState<'admin' | 'staff'>('staff');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,11 +53,21 @@ function UserModal({
     setError(null);
     setLoading(true);
     try {
-      if (state.mode === 'reset-password') {
+      if (state.mode === 'create-user') {
+        const res = await window.sccfs.users.create(sessionId, username, password, role);
+        if (!res.ok) { setError(res.error?.message ?? 'Failed'); return; }
+        addToast('success', `User "${username}" created`);
+      } else if (state.mode === 'reset-password') {
         const res = await window.sccfs.users.resetPassword(sessionId, state.userId!, password);
         if (!res.ok) { setError(res.error?.message ?? 'Failed'); return; }
         addToast('success', `Password reset for "${state.username}"`);
       } else {
+        // 2FA: Verify current password is entered twice and matches
+        if (currentPassword !== currentPasswordConfirm) {
+          setError('Current password confirmation does not match');
+          setLoading(false);
+          return;
+        }
         const res = await window.sccfs.auth.changePassword(sessionId, currentPassword, password);
         if (!res.ok) { setError(res.error?.message ?? 'Failed'); return; }
         addToast('success', 'Password changed');
@@ -67,6 +80,7 @@ function UserModal({
   };
 
   const titles = {
+    'create-user': 'Create New User',
     'reset-password': `Reset Password — ${state.username}`,
     'change-password': 'Change My Password',
   };
@@ -104,6 +118,41 @@ function UserModal({
           </div>
         )}
 
+        {state.mode === 'create-user' && (
+          <>
+            <label style={labelStyle}>Username</label>
+            <input
+              required
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              style={inputStyle}
+              placeholder="Enter username"
+              autoFocus
+            />
+
+            <label style={labelStyle}>Password</label>
+            <input
+              required
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={inputStyle}
+              placeholder="Enter password"
+            />
+
+            <label style={labelStyle}>Role</label>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value as 'admin' | 'staff')}
+              style={{ ...inputStyle, cursor: 'pointer' }}
+            >
+              <option value="staff">Staff</option>
+              <option value="admin">Admin</option>
+            </select>
+          </>
+        )}
+
         {state.mode === 'change-password' && (
           <>
             <label style={labelStyle}>Current Password</label>
@@ -113,25 +162,41 @@ function UserModal({
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
               style={inputStyle}
+              autoFocus
+            />
+
+            <label style={labelStyle}>Confirm Current Password</label>
+            <input
+              required
+              type="password"
+              value={currentPasswordConfirm}
+              onChange={(e) => setCurrentPasswordConfirm(e.target.value)}
+              style={inputStyle}
             />
           </>
         )}
 
-        <label style={labelStyle}>
-          New Password
-        </label>
-        <input
-          required
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={{ ...inputStyle, marginBottom: 20 }}
-          autoFocus
-        />
+        {state.mode !== 'create-user' && (
+          <>
+            <label style={labelStyle}>
+              {state.mode === 'change-password' ? 'New Password' : 'Password'}
+            </label>
+            <input
+              required
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={{ ...inputStyle, marginBottom: 20 }}
+              autoFocus={state.mode === 'reset-password'}
+            />
+          </>
+        )}
 
-        <p style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 20 }}>
-          Min 8 chars · uppercase · lowercase · digit · special character
-        </p>
+        {state.mode !== 'create-user' && (
+          <p style={{ fontSize: 11, color: 'var(--text-secondary)', marginBottom: 20 }}>
+            Min 8 chars · uppercase · lowercase · digit · special character
+          </p>
+        )}
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
           <button type="button" onClick={onClose} style={btnStyle('secondary', true)}>
@@ -224,6 +289,21 @@ export function UserManagement({ sessionId, user, addToast }: Props): React.JSX.
   ];
   const PIE_COLORS = ['#4f46e5', '#0284c7', '#16a34a', '#dc2626'];
 
+  // Only admins can view this page
+  if (user.role !== 'admin') {
+    return (
+      <div style={{ padding: 28 }}>
+        <div style={{ textAlign: 'center', color: 'var(--text-secondary)', marginTop: 40 }}>
+          <div style={{ fontSize: 40, marginBottom: 16 }}>🔒</div>
+          <h2 style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>
+            Access Denied
+          </h2>
+          <p style={{ fontSize: 14 }}>User management is only available to administrators.</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: 28 }}>
       {/* Header */}
@@ -237,6 +317,12 @@ export function UserManagement({ sessionId, user, addToast }: Props): React.JSX.
           </p>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={() => setModal({ mode: 'create-user' })}
+            style={btnStyle('primary')}
+          >
+            ➕ New User
+          </button>
           <button
             onClick={() => setModal({ mode: 'change-password', userId: user.id, username: user.username })}
             style={btnStyle('secondary')}
@@ -326,8 +412,69 @@ export function UserManagement({ sessionId, user, addToast }: Props): React.JSX.
         </div>
       </div>
 
+      {/* Current user card */}
+      {!loading && (
+        <div style={{ ...cardStyle(), marginBottom: 20 }}>
+          <h2 style={{ fontSize: 15, fontWeight: 600, marginBottom: 16, color: 'var(--text-primary)' }}>
+            👤 My Account
+          </h2>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 20 }}>
+            <div>
+              <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                Username
+              </p>
+              <p style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                {user.username}
+              </p>
+            </div>
+            <div>
+              <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                Role
+              </p>
+              <span
+                style={{
+                  fontSize: 11,
+                  padding: '4px 10px',
+                  borderRadius: 10,
+                  background: user.role === 'admin' ? '#eef2ff' : '#f0fdf4',
+                  color: user.role === 'admin' ? '#4f46e5' : '#16a34a',
+                  fontWeight: 600,
+                  textTransform: 'capitalize',
+                  display: 'inline-block',
+                }}
+              >
+                {user.role}
+              </span>
+            </div>
+            <div>
+              <p style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
+                Status
+              </p>
+              <span
+                style={{
+                  fontSize: 11,
+                  padding: '4px 10px',
+                  borderRadius: 10,
+                  background: user.is_active ? '#f0fdf4' : '#fef2f2',
+                  color: user.is_active ? '#16a34a' : '#dc2626',
+                  fontWeight: 600,
+                  display: 'inline-block',
+                }}
+              >
+                {user.is_active ? '● Active' : '○ Inactive'}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Table */}
       <div style={{ ...cardStyle(), padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+          <h2 style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+            👥 Other Accounts
+          </h2>
+        </div>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: 'var(--bg-hover)', borderBottom: '1px solid var(--border)' }}>
@@ -345,28 +492,20 @@ export function UserManagement({ sessionId, user, addToast }: Props): React.JSX.
                   Loading…
                 </td>
               </tr>
+            ) : users.filter((u) => u.id !== user.id).length === 0 ? (
+              <tr>
+                <td colSpan={5} style={{ textAlign: 'center', padding: 32, color: 'var(--text-secondary)' }}>
+                  No other accounts
+                </td>
+              </tr>
             ) : (
-              users.map((u) => {
-                const isSelf = u.id === user.id;
+              users.filter((u) => u.id !== user.id).map((u) => {
+                const isSelf = false;
                 return (
                   <tr key={u.id} style={{ borderBottom: '1px solid var(--border)' }}>
                     <td style={tdStyle()}>
                       <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
                         {u.username}
-                        {isSelf && (
-                          <span
-                            style={{
-                              fontSize: 10,
-                              background: 'var(--accent)',
-                              color: '#fff',
-                              borderRadius: 10,
-                              padding: '1px 6px',
-                              marginLeft: 6,
-                            }}
-                          >
-                            You
-                          </span>
-                        )}
                       </div>
                     </td>
                     <td style={tdStyle()}>
@@ -418,7 +557,7 @@ export function UserManagement({ sessionId, user, addToast }: Props): React.JSX.
                         >
                           🔑
                         </button>
-                        {!u.is_active && (
+                        {(!u.is_active || (u.locked_until && Date.now() < u.locked_until)) && (
                           <button
                             onClick={() => handleUnlock(u)}
                             style={btnStyle('ghost', true)}
@@ -427,7 +566,7 @@ export function UserManagement({ sessionId, user, addToast }: Props): React.JSX.
                             🔓
                           </button>
                         )}
-                        {!isSelf && (
+                        {!isSelf && u.role !== 'admin' && (
                           <button
                             onClick={() => handleDelete(u)}
                             style={{ ...btnStyle('ghost', true), color: 'var(--danger)' }}
