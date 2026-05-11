@@ -53,7 +53,10 @@ export const IPC_CHANNELS = {
   STORAGE_BACKUP: 'sccfs:storage:backup',
   STORAGE_RESTORE: 'sccfs:storage:restore',
   STORAGE_DRIVE_STATUS: 'sccfs:storage:drive-status',
+<<<<<<< HEAD
     STORAGE_GET_PATH: 'sccfs:storage:get-path',
+=======
+>>>>>>> 12d2e260e73ffa1b78d70405fd5646124f09ba2d
   APP_RESTORED: 'sccfs:app:restored',
 
   // Session management (security dashboard)

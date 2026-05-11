@@ -218,6 +218,7 @@ const api = {
         IPC_CHANNELS.STORAGE_DRIVE_STATUS,
         { sessionId },
       ),
+<<<<<<< HEAD
 
       getStoragePath: (sessionId: string) =>
         safeInvoke<{ path: string }>(IPC_CHANNELS.STORAGE_GET_PATH, { sessionId }),
@@ -227,6 +228,8 @@ const api = {
         safeInvoke<{ removed: boolean }>(IPC_CHANNELS.STORAGE_REMOVE_SHARE, { sessionId }),
       openStorageFolder: (sessionId: string) =>
         safeInvoke<{ opened: boolean }>(IPC_CHANNELS.STORAGE_OPEN_FOLDER, { sessionId }),
+=======
+>>>>>>> 12d2e260e73ffa1b78d70405fd5646124f09ba2d
   },
 
   sessions: {

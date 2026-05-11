@@ -7,9 +7,14 @@ import { up as addFileExtension } from './migrations/002-add-file-extension';
 import { up as addFilePayloadDedup } from './migrations/003-file-payload-dedup';
 import { up as anonymizeUploadAttribution } from './migrations/004-anonymize-upload-attribution';
 import { up as addSeedingFlag } from './migrations/005-add-seeding-flag';
+<<<<<<< HEAD
 import { up as addNetworkStorage } from './migrations/006-add-network-storage';
 
 const migrations = [initialSchema, addFileExtension, addFilePayloadDedup, anonymizeUploadAttribution, addSeedingFlag, addNetworkStorage];
+=======
+
+const migrations = [initialSchema, addFileExtension, addFilePayloadDedup, anonymizeUploadAttribution, addSeedingFlag];
+>>>>>>> 12d2e260e73ffa1b78d70405fd5646124f09ba2d
 
 export function runMigrations(db: Database.Database): void {
   // Create a migrations tracking table

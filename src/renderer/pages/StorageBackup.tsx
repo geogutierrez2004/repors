@@ -556,11 +556,14 @@ export function StorageBackup({ sessionId, user, addToast }: Props): React.JSX.E
           loading={restoreLoading}
         />
       )}
+<<<<<<< HEAD
 
       {/* Network Storage Configuration */}
       <div style={{ marginTop: 28 }}>
         <NetworkStorage sessionId={sessionId} user={user} addToast={addToast} />
       </div>
+=======
+>>>>>>> 12d2e260e73ffa1b78d70405fd5646124f09ba2d
     </div>
   );
 }

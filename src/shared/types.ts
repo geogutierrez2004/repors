@@ -90,9 +90,12 @@ export interface FileRecord {
   created_at: string;
   updated_at: string;
   uploaded_by: string | null;
+<<<<<<< HEAD
   storage_location?: StorageLocation;
   synced_at?: string | null;
   sync_error?: string | null;
+=======
+>>>>>>> 12d2e260e73ffa1b78d70405fd5646124f09ba2d
 }
 
 export type SourceHandlingMode = 'keep_original' | 'move_to_system' | 'ask_each_time';

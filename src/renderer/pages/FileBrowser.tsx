@@ -1305,7 +1305,11 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                     </button>
                   </th>
                   <th style={thStyle(90)}>By</th>
+<<<<<<< HEAD
                   <th style={thStyle(160)}>Actions</th>
+=======
+                  <th style={thStyle(120)}>Actions</th>
+>>>>>>> 12d2e260e73ffa1b78d70405fd5646124f09ba2d
                 </tr>
               </thead>
               <tbody>
@@ -1391,8 +1395,13 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                       <td style={{ ...tdStyle(90), color: 'var(--text-secondary)', fontSize: 12 }}>
                         {f.uploaded_by ?? 'system'}
                       </td>
+<<<<<<< HEAD
                       <td style={tdStyle(160)}>
                         <div style={{ display: 'flex', gap: 4, flexWrap: 'nowrap', justifyContent: 'flex-start' }}>
+=======
+                      <td style={tdStyle(120)}>
+                        <div style={{ display: 'flex', gap: 4 }}>
+>>>>>>> 12d2e260e73ffa1b78d70405fd5646124f09ba2d
                           <button
                             onClick={() => handleDownload(f.id, f.original_name, !!f.is_encrypted)}
                             style={btnStyle('ghost', true)}

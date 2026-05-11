@@ -485,7 +485,10 @@ export class DashboardService {
                 f.original_extension,
                 f.shelf_id, s.name as shelf_name,
                 f.is_encrypted, f.created_at, f.updated_at,
+<<<<<<< HEAD
                 f.storage_location, f.synced_at, f.sync_error,
+=======
+>>>>>>> 12d2e260e73ffa1b78d70405fd5646124f09ba2d
                 COALESCE(u.username, 'system') as uploaded_by
          FROM files f
          JOIN shelves s ON f.shelf_id = s.id
@@ -1316,6 +1319,7 @@ export class DashboardService {
   }
 
   // ── System drive status ──────────────
+<<<<<<< HEAD
   getStoragePath(sessionId: string): { path: string } {
     requireAuth(sessionId);
     const filesDir = getFilesDir();
@@ -1370,6 +1374,8 @@ export class DashboardService {
     }
   }
 
+=======
+>>>>>>> 12d2e260e73ffa1b78d70405fd5646124f09ba2d
 
   getSystemStorageStatus(sessionId: string): Array<{
     drive: string;

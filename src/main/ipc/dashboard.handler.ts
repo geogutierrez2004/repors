@@ -377,6 +377,7 @@ export function registerDashboardHandlers(
       }
     }));
 
+<<<<<<< HEAD
   ipcMain.handle(IPC_CHANNELS.STORAGE_GET_PATH, (_event, payload: unknown) =>
     guard(async () => {
       try {
@@ -417,6 +418,8 @@ export function registerDashboardHandlers(
       }
     }));
 
+=======
+>>>>>>> 12d2e260e73ffa1b78d70405fd5646124f09ba2d
   // ── Sessions ─────────────────────────
   ipcMain.handle(IPC_CHANNELS.SESSIONS_LIST, (_event, payload: unknown) =>
     guard(async () => {
