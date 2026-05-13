@@ -1121,6 +1121,11 @@ export class DashboardService {
   async renameShelf(sessionId: string, shelfId: string, name: string): Promise<ShelfRecord> {
     const session = requireAuth(sessionId);
 
+    // Only admins can rename shelves
+    if (session.role === 'staff') {
+      throw new AuthError('PERMISSION_DENIED', 'Staff cannot rename folders');
+    }
+
     const shelf = this.db.prepare('SELECT * FROM shelves WHERE id = ?').get(shelfId) as
       | { id: string; name: string; is_system: number }
       | undefined;
@@ -1369,7 +1374,6 @@ export class DashboardService {
       throw new AuthError('OPEN_FOLDER_FAILED', 'Failed to open storage folder');
     }
   }
-
 
   getSystemStorageStatus(sessionId: string): Array<{
     drive: string;

@@ -201,7 +201,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     height: PREVIEW_MODAL_DEFAULT_HEIGHT,
   });
   const [isDraggingFiles, setIsDraggingFiles] = useState(false);
-  const [renameModal, setRenameModal] = useState<{ fileId: string; currentName: string } | null>(null);
+  const [renameModal, setRenameModal] = useState<{ fileId: string; currentName: string; target: 'file' | 'shelf' } | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteConfirmModal, setDeleteConfirmModal] = useState<{ type: 'file' | 'folder'; ids?: string[]; name?: string } | null>(null);
@@ -720,6 +720,17 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     }
   };
 
+  const handleRenameShelf = async (shelfId: string, name: string) => {
+    // Staff users cannot rename folders
+    if (user.role !== 'admin') {
+      addToast('error', 'Only admins can rename folders');
+      return;
+    }
+    setRenameModal({ fileId: shelfId, currentName: name, target: 'shelf' });
+    setRenameValue(name);
+    setRenameError(null);
+  };
+
   const handleDeleteShelf = async (shelfId: string, name: string) => {
     // Staff users cannot delete folders
     if (user.role !== 'admin') {
@@ -880,7 +891,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
     if (!renameModal) return;
     const trimmed = renameValue.trim();
     if (!trimmed) {
-      setRenameError('File name cannot be empty');
+      setRenameError((renameModal.target === 'shelf') ? 'Folder name cannot be empty' : 'File name cannot be empty');
       return;
     }
     if (trimmed === renameModal.currentName) {
@@ -889,15 +900,28 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       return;
     }
 
-    const res = await window.sccfs.files.rename(sessionId, renameModal.fileId, trimmed);
-    if (res.ok) {
-      addToast('success', `Renamed to "${trimmed}"`);
-      setRenameModal(null);
-      setRenameValue('');
-      setRenameError(null);
-      loadFiles();
+    if (renameModal.target === 'file') {
+      const res = await window.sccfs.files.rename(sessionId, renameModal.fileId, trimmed);
+      if (res.ok) {
+        addToast('success', `Renamed to "${trimmed}"`);
+        setRenameModal(null);
+        setRenameValue('');
+        setRenameError(null);
+        loadFiles();
+      } else {
+        setRenameError(res.error?.message ?? 'Rename failed');
+      }
     } else {
-      setRenameError(res.error?.message ?? 'Rename failed');
+      const res = await window.sccfs.shelves.rename(sessionId, renameModal.fileId, trimmed);
+      if (res.ok) {
+        addToast('success', `Folder renamed to "${trimmed}"`);
+        setRenameModal(null);
+        setRenameValue('');
+        setRenameError(null);
+        loadShelves();
+      } else {
+        setRenameError(res.error?.message ?? 'Rename failed');
+      }
     }
   };
 
@@ -1032,20 +1056,20 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
             </button>
             {!s.is_system && (
               <button
-                onClick={() => handleDeleteShelf(s.id, s.name)}
+                onClick={() => handleRenameShelf(s.id, s.name)}
                 disabled={user.role !== 'admin'}
-                title={user.role !== 'admin' ? 'Only admins can delete folders' : 'Delete folder'}
+                title={user.role !== 'admin' ? 'Only admins can rename folders' : 'Rename folder'}
                 style={{
                   background: 'none',
                   border: 'none',
-                  color: user.role !== 'admin' ? 'var(--text-secondary)' : 'var(--danger)',
+                  color: user.role !== 'admin' ? 'var(--text-secondary)' : 'var(--text-primary)',
                   cursor: user.role !== 'admin' ? 'not-allowed' : 'pointer',
                   padding: '4px 6px',
                   fontSize: 12,
                   opacity: user.role !== 'admin' ? 0.5 : 1,
                 }}
               >
-                ×
+                ✏
               </button>
             )}
           </div>
@@ -1418,7 +1442,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                           </button>
                           <button
                             onClick={() => {
-                              setRenameModal({ fileId: f.id, currentName: f.original_name });
+                              setRenameModal({ fileId: f.id, currentName: f.original_name, target: 'file' });
                               setRenameValue(f.original_name);
                               setRenameError(null);
                             }}
@@ -1748,7 +1772,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
       {/* Rename Modal */}
       {renameModal && (
         <OverlayModal>
-          <h3 style={{ marginTop: 0, marginBottom: 12 }}>Rename File</h3>
+          <h3 style={{ marginTop: 0, marginBottom: 12 }}>{renameModal.target === 'shelf' ? 'Rename Folder' : 'Rename File'}</h3>
           <p style={{ marginTop: 0, marginBottom: 12, color: 'var(--text-secondary)', fontSize: 13 }}>
             Current name: <strong>{renameModal.currentName}</strong>
           </p>
@@ -1771,7 +1795,7 @@ export function FileBrowser({ sessionId, user, addToast }: Props): React.JSX.Ele
                 setRenameError(null);
               }
             }}
-            placeholder="New file name"
+            placeholder={renameModal.target === 'shelf' ? 'New folder name' : 'New file name'}
             style={modalInputStyle}
           />
           {renameError && (

@@ -116,24 +116,16 @@ export default function NetworkStorage({ sessionId, user, addToast }: Props): Re
             <div style={codeBlockStyle}>{scsfsFolderPath || 'Loading...'}</div>
             <div style={{ display: 'flex', gap: 8 }}>
               {scsfsFolderPath && (
-                <>
-                  <button
-                    onClick={() => copyToClipboard(scsfsFolderPath)}
-                    style={btnStyle('secondary', true)}
-                  >
-                    📋 Copy Path
-                  </button>
-                  <button
-                    onClick={async () => {
-                      const res = await window.sccfs.storage.openStorageFolder(sessionId);
-                      if (res?.ok) addToast('success', 'Opened storage folder');
-                      else addToast('error', res?.error?.message ?? 'Failed to open folder');
-                    }}
-                    style={btnStyle('secondary')}
-                  >
-                    📂 Open Folder
-                  </button>
-                </>
+                <button
+                  onClick={async () => {
+                    const res = await window.sccfs.storage.openStorageFolder(sessionId);
+                    if (res?.ok) addToast('success', 'Opened storage folder');
+                    else addToast('error', res?.error?.message ?? 'Failed to open folder');
+                  }}
+                  style={btnStyle('secondary')}
+                >
+                  📂 Open Folder
+                </button>
               )}
             </div>
           </div>
